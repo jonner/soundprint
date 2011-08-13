@@ -1,0 +1,6 @@
+*.sw[op]
+*~
+Makefile
+Makefile.in
+.deps
+.libs
