@@ -202,6 +202,15 @@ public:
         int size = gst_value_list_get_size (val);
         int i;
 
+        // the inflection point between the two halves of the alpha formula
+        const float TX = 0.65;
+        const float TY = 0.75;
+        // multiplier for the first segment
+        const float k = (1 / TX) * (1 / TX) * TY;
+        // slope and offset of the second segment
+        static const float m = (1.0 - TY) / (1.0 - TX);
+        static const float b = TY - m * TX;
+
         for (i = 0; i < size; i++)
         {
             const GValue *floatval = gst_value_list_get_value (val, i);
@@ -212,16 +221,17 @@ public:
             if (shade > 0.0)
             {
                 // Try to decrease the background noise a bit while making the
-                // foreground noise stand out a bit better.  So the slope from 0
-                // to 0.5 is a bit steeper (e.g. the low-level noise drops off
-                // faster) while the slope from 0.5 to 1.0 is more level.
-                if (shade < 0.5)
+                // foreground noise stand out a bit better.  From 0 to T, we
+                // use a parabolic (squared) slope to de-emphasize the lower
+                // levels, and from T and up, we simply map the aplitude
+                // directly to the alpha.
+                if (shade < TX)
                 {
-                    shade *= 1.5;
+                    shade = k * shade * shade;
                 }
                 else
                 {
-                    shade = shade * 0.5 + 0.5;
+                    shade = m * shade + b;
                 }
 
                 // this is likely going to be quite slow.  it'd be much faster
