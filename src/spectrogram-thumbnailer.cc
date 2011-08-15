@@ -19,10 +19,15 @@
  *
  *******************************************************************************/
 
+#include <cairomm/cairomm.h>
 #include <glibmm.h>
 #include <gst/gst.h>
 
-Glib::RefPtr<Glib::MainLoop> mainloop;
+const double SPECTROGRAM_LENGTH = 10.0;
+const double SAMPLE_INTERVAL = 0.05;
+const double THRESHOLD = -90.0;
+const int NUM_FREQ_BANDS = 128;
+const double SAMPLE_SIZE = 2.0;
 
 class App
 {
@@ -35,6 +40,7 @@ public:
     , m_spectrum (gst_element_factory_make ("spectrum", 0))
     , m_sink (gst_element_factory_make ("fakesink", 0))
     , m_bus (gst_pipeline_get_bus (GST_PIPELINE (m_pipeline)))
+    , m_sample_no (0)
     {
         gst_bin_add_many (GST_BIN (m_pipeline), m_decoder, m_spectrum, m_sink, NULL);
 
@@ -45,7 +51,10 @@ public:
 
         g_object_set (m_spectrum,
                       "post-messages", TRUE,
-                      "interval", GST_SECOND,
+                      "interval", static_cast<guint64>(SAMPLE_INTERVAL *
+                                                       static_cast<double>(GST_SECOND)),
+                      "threshold", static_cast<int>(THRESHOLD),
+                      "bands", NUM_FREQ_BANDS,
                       NULL);
         gst_element_link (m_spectrum, m_sink);
 
@@ -62,32 +71,26 @@ public:
 
     int run ()
     {
-        // only play first ten seconds
-        gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
-                          GST_SEEK_TYPE_SET, 0,
-                          GST_SEEK_TYPE_SET, 10 * GST_SECOND);
         gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
+
         m_mainloop->run ();
         return 0;
     }
 
     static void on_pad_added_proxy (GstElement *element, GstPad *pad, gpointer user_data)
     {
-        g_debug ("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         self->on_pad_added (element, pad);
     }
 
-    void on_pad_added (GstElement *element, GstPad *pad)
+    void on_pad_added (GstElement *, GstPad *pad)
     {
         GstCaps *caps = gst_pad_get_caps (pad);
         GstStructure *structure = gst_caps_get_structure (caps, 0);
         const char *name = gst_structure_get_name (structure);
-        g_debug ("%s: caps = '%s'", G_STRFUNC, name);
 
         if (g_str_has_prefix (name, "audio/"))
         {
-            g_debug ("Linking pad...");
             GstPad *spectrum_pad = gst_element_get_static_pad (m_spectrum, "sink");
             if (gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
             {
@@ -97,25 +100,45 @@ public:
             {
                 g_warning ("unable to link pad");
             }
+            gint64 duration;
+            GstFormat format = GST_FORMAT_TIME;
+
+            if (!gst_element_query_duration (m_pipeline, &format, &duration))
+            {
+                g_warning ("Couldn't query duration!");
+                gst_element_set_state (m_pipeline, GST_STATE_NULL);
+                m_mainloop->quit ();
+            }
+
+            duration /= GST_SECOND;
+
+            int h = SAMPLE_SIZE * NUM_FREQ_BANDS;
+            int w = (duration / SAMPLE_INTERVAL) * SAMPLE_SIZE;
+            m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
+                                                     w, h);
+            m_cr = Cairo::Context::create (m_surface);
+            m_cr->translate (0, h);
+            m_cr->scale (1.0, -1.0);
+            m_cr->set_source_rgb (1.0, 1.0, 1.0);
+            m_cr->paint ();
         }
     }
 
     static void on_eos_proxy (GstBus *bus, GstMessage *message, gpointer user_data)
     {
-        g_debug ("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         self->on_eos (bus, message);
     }
 
-    void on_eos (GstBus *bus, GstMessage *message)
+    void on_eos (GstBus *, GstMessage *)
     {
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
+        m_surface->write_to_png ("thumbnail.png");
         m_mainloop->quit ();
     }
 
     static void on_element_message_proxy (GstBus *bus, GstMessage *message, gpointer user_data)
     {
-        g_debug ("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         const GstStructure *structure = gst_message_get_structure (message);
         if (gst_structure_has_name (structure, "spectrum"))
@@ -144,9 +167,29 @@ public:
     // -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60,
     // -60, -60 };
 
-    void on_spectrum (GstBus *bus, const GstStructure *structure)
+    void on_spectrum (GstBus *, const GstStructure *structure)
     {
-        g_debug ("%s", gst_structure_to_string (structure));
+        const GValue *val = gst_structure_get_value (structure, "magnitude");
+        int size = gst_value_list_get_size (val);
+        int i;
+
+        for (i = 0; i < size; i++)
+        {
+            const GValue *floatval = gst_value_list_get_value (val, i);
+            float v = g_value_get_float (floatval);
+            double shade = (v - THRESHOLD) / std::abs(THRESHOLD);
+            if (shade > 0.0)
+            {
+                // this is likely going to be quite slow.  it'd be much faster
+                // to simply access the imagesurface data and write to it
+                // directly
+                m_cr->rectangle (m_sample_no * SAMPLE_SIZE, i * SAMPLE_SIZE,
+                                 SAMPLE_SIZE, SAMPLE_SIZE);
+                m_cr->set_source_rgba (0.0, 0.0, 0.0, shade);
+                m_cr->fill ();
+            }
+        }
+        ++m_sample_no;
     }
 
 private:
@@ -157,6 +200,10 @@ private:
     GstElement *m_spectrum; // weak ref
     GstElement *m_sink; // weak ref
     GstBus *m_bus;
+
+    Cairo::RefPtr<Cairo::Surface> m_surface;
+    Cairo::RefPtr<Cairo::Context> m_cr;
+    int m_sample_no;
 };
 
 int main (int argc, char** argv)
@@ -172,6 +219,12 @@ int main (int argc, char** argv)
 
     std::string uri = argv[1];
 
+    try {
     App app (uri);
     return app.run();
+    }
+    catch (std::exception& e)
+    {
+        throw e;
+    }
 }

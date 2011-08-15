@@ -11,6 +11,7 @@ AC_PROG_CXX
 PKG_CHECK_MODULES(DEPS, [
                          gstreamer-0.10
                          glibmm-2.4
+                         cairomm-1.0
                          ])
 
 AC_CONFIG_FILES([Makefile])
