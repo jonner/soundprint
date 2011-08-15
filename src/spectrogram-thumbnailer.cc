@@ -23,11 +23,12 @@
 #include <glibmm.h>
 #include <gst/gst.h>
 
-const double SPECTROGRAM_LENGTH = 10.0;
+const double SPECTROGRAM_LENGTH = 8.0;
 const double SAMPLE_INTERVAL = 0.01;
-const double THRESHOLD = -80.0;
+const double THRESHOLD = -100.0;
 const int NUM_FREQ_BANDS = 200;
-const double SAMPLE_SIZE = 2.0;
+const double SAMPLE_WIDTH = 2.0;
+const double SAMPLE_HEIGHT = 3.0;
 
 class App
 {
@@ -111,8 +112,8 @@ public:
             gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
 
             // Set up the drawing surface
-            int h = SAMPLE_SIZE * NUM_FREQ_BANDS;
-            int w = (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL) * SAMPLE_SIZE;
+            int h = SAMPLE_HEIGHT * NUM_FREQ_BANDS;
+            int w = (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL) * SAMPLE_WIDTH;
             m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
                                                      w, h);
             m_cr = Cairo::Context::create (m_surface);
@@ -226,8 +227,8 @@ public:
                 // this is likely going to be quite slow.  it'd be much faster
                 // to simply access the imagesurface data and write to it
                 // directly
-                m_cr->rectangle (m_sample_no * SAMPLE_SIZE, i * SAMPLE_SIZE,
-                                 SAMPLE_SIZE, SAMPLE_SIZE);
+                m_cr->rectangle (m_sample_no * SAMPLE_WIDTH, i * SAMPLE_HEIGHT,
+                                 SAMPLE_WIDTH, SAMPLE_HEIGHT);
                 m_cr->set_source_rgba (0.0, 0.0, 0.0, shade);
                 m_cr->fill ();
             }
