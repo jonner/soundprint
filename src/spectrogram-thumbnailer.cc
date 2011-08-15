@@ -95,11 +95,7 @@ public:
         if (g_str_has_prefix (name, "audio/"))
         {
             GstPad *spectrum_pad = gst_element_get_static_pad (m_spectrum, "sink");
-            if (gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
-            {
-                gst_element_set_state (m_spectrum, GST_STATE_PLAYING);
-            }
-            else
+            if (!gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
             {
                 g_warning ("unable to link pad");
             }
