@@ -206,8 +206,23 @@ public:
             const GValue *floatval = gst_value_list_get_value (val, i);
             float v = g_value_get_float (floatval);
             double shade = (v - THRESHOLD) / std::abs(THRESHOLD);
+            // clamp value betwen 0.0 and 1.0, just in case
+            shade = std::max (0.0, std::min (1.0, shade));
             if (shade > 0.0)
             {
+                // Try to decrease the background noise a bit while making the
+                // foreground noise stand out a bit better.  So the slope from 0
+                // to 0.5 is a bit steeper (e.g. the low-level noise drops off
+                // faster) while the slope from 0.5 to 1.0 is more level.
+                if (shade < 0.5)
+                {
+                    shade *= 1.5;
+                }
+                else
+                {
+                    shade = shade * 0.5 + 0.5;
+                }
+
                 // this is likely going to be quite slow.  it'd be much faster
                 // to simply access the imagesurface data and write to it
                 // directly
