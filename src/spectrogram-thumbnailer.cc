@@ -74,8 +74,7 @@ public:
 
     int run ()
     {
-        gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
-
+        gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
         m_mainloop->run ();
         return 0;
     }
@@ -99,20 +98,21 @@ public:
             {
                 g_warning ("unable to link pad");
             }
-            gint64 duration;
-            GstFormat format = GST_FORMAT_TIME;
 
-            if (!gst_element_query_duration (m_pipeline, &format, &duration))
-            {
-                g_warning ("Couldn't query duration!");
-                gst_element_set_state (m_pipeline, GST_STATE_NULL);
-                m_mainloop->quit ();
-            }
+            // only process the first X seconds
+            bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
+                                             GST_SEEK_FLAG_FLUSH,
+                                             GST_SEEK_TYPE_SET, 0,
+                                             GST_SEEK_TYPE_SET, SPECTROGRAM_LENGTH * GST_SECOND);
 
-            duration /= GST_SECOND;
+            if (!success)
+                g_warning ("Failed to seek to first %g seconds", SPECTROGRAM_LENGTH);
 
+            gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
+
+            // Set up the drawing surface
             int h = SAMPLE_SIZE * NUM_FREQ_BANDS;
-            int w = (duration / SAMPLE_INTERVAL) * SAMPLE_SIZE;
+            int w = (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL) * SAMPLE_SIZE;
             m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
                                                      w, h);
             m_cr = Cairo::Context::create (m_surface);
