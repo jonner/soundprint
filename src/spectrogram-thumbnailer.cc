@@ -24,9 +24,9 @@
 #include <gst/gst.h>
 
 const double SPECTROGRAM_LENGTH = 10.0;
-const double SAMPLE_INTERVAL = 0.05;
-const double THRESHOLD = -90.0;
-const int NUM_FREQ_BANDS = 128;
+const double SAMPLE_INTERVAL = 0.01;
+const double THRESHOLD = -80.0;
+const int NUM_FREQ_BANDS = 200;
 const double SAMPLE_SIZE = 2.0;
 
 class App
