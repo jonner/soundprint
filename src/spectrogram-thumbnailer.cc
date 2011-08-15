@@ -60,6 +60,9 @@ public:
 
         gst_bus_add_signal_watch (m_bus);
         g_signal_connect (m_bus, "message::eos", G_CALLBACK (on_eos_proxy), this);
+        g_signal_connect (m_bus, "message::info", G_CALLBACK (on_error_message), this);
+        g_signal_connect (m_bus, "message::warning", G_CALLBACK (on_error_message), this);
+        g_signal_connect (m_bus, "message::error", G_CALLBACK (on_error_message), this);
         g_signal_connect (m_bus, "message::element", G_CALLBACK (on_element_message_proxy), this);
     }
 
@@ -122,6 +125,35 @@ public:
             m_cr->set_source_rgb (1.0, 1.0, 1.0);
             m_cr->paint ();
         }
+    }
+
+    static void on_error_message (GstBus *, GstMessage *message, gpointer)
+    {
+        GError *error = NULL;
+        gchar *debug = NULL;
+
+        switch (message->type)
+        {
+            case GST_MESSAGE_INFO:
+                gst_message_parse_info (message, &error, &debug);
+                break;
+            case GST_MESSAGE_WARNING:
+                gst_message_parse_warning (message, &error, &debug);
+                break;
+            case GST_MESSAGE_ERROR:
+                gst_message_parse_error (message, &error, &debug);
+                break;
+            default:
+                g_warning ("unexpected message type");
+        }
+
+        if (error)
+            g_print ("%s", error->message);
+        if (debug)
+            g_print ("%s", debug);
+
+        g_clear_error (&error);
+        g_free (debug);
     }
 
     static void on_eos_proxy (GstBus *bus, GstMessage *message, gpointer user_data)
