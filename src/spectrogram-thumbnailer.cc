@@ -77,7 +77,14 @@ public:
     int run ()
     {
         gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
-        m_mainloop->run ();
+        try {
+            m_mainloop->run ();
+        } catch (std::exception &e)
+        {
+            gst_element_set_state (m_pipeline, GST_STATE_NULL);
+            g_printerr ("%s", e.what ());
+            return 1;
+        }
         return 0;
     }
 
@@ -278,13 +285,6 @@ int main (int argc, char** argv)
     Glib::init ();
 
     std::string uri = argv[1];
-
-    try {
     App app (uri);
     return app.run();
-    }
-    catch (std::exception& e)
-    {
-        throw e;
-    }
 }
