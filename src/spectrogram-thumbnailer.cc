@@ -23,12 +23,13 @@
 #include <glibmm.h>
 #include <gst/gst.h>
 
-const double SPECTROGRAM_LENGTH = 8.0;
+const double SPECTROGRAM_LENGTH = 5.0;
 const double SAMPLE_INTERVAL = 0.01;
 const double THRESHOLD = -100.0;
-const int NUM_FREQ_BANDS = 200;
-const double SAMPLE_WIDTH = 2.0;
-const double SAMPLE_HEIGHT = 3.0;
+const int NUM_FREQ_BANDS = 100;
+const double THUMBNAIL_SIZE = 128.0;
+const double SAMPLE_WIDTH = THUMBNAIL_SIZE / (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL);
+const double SAMPLE_HEIGHT = THUMBNAIL_SIZE / NUM_FREQ_BANDS;
 
 class App
 {
@@ -162,6 +163,11 @@ public:
     void on_eos (GstBus *, GstMessage *)
     {
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
+
+        // give thumbnail a little frame
+        m_cr->set_source_rgb (0.0, 0.0, 0.0);
+        m_cr->rectangle (0.0, 0.0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+        m_cr->stroke ();
         m_surface->write_to_png ("thumbnail.png");
         m_mainloop->quit ();
     }
