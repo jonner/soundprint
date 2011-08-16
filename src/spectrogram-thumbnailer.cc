@@ -47,7 +47,7 @@ public:
         gst_bin_add_many (GST_BIN (m_pipeline), m_decoder, m_spectrum, m_sink, NULL);
 
         g_object_set (m_decoder,
-                      "uri", m_fileuri.c_str (),
+                      "uri", Glib::filename_to_utf8 (m_fileuri).c_str (),
                       NULL);
         g_signal_connect (m_decoder, "pad-added", G_CALLBACK (on_pad_added_proxy), this);
 
