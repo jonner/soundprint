@@ -101,48 +101,13 @@ public:
     , m_bus (0)
     , m_sample_no (0)
     {
-        parse_args (argc, argv);
-
-        m_mainloop = Glib::MainLoop::create();
-        m_pipeline = gst_pipeline_new (0);
-        m_decoder = gst_element_factory_make ("uridecodebin", 0);
-        m_spectrum = gst_element_factory_make ("spectrum", 0);
-        m_sink = gst_element_factory_make ("fakesink", 0);
-        m_bus = gst_pipeline_get_bus (GST_PIPELINE (m_pipeline));
-
-        gst_bin_add_many (GST_BIN (m_pipeline), m_decoder, m_spectrum, m_sink, NULL);
-
-        g_object_set (m_decoder,
-                      "uri", Glib::filename_to_utf8 (m_fileuri).c_str (),
-                      NULL);
-        g_signal_connect (m_decoder, "pad-added", G_CALLBACK (on_pad_added_proxy), this);
-
-        g_object_set (m_spectrum,
-                      "post-messages", TRUE,
-                      "interval", static_cast<guint64>(SAMPLE_INTERVAL *
-                                                       static_cast<double>(GST_SECOND)),
-                      "threshold", static_cast<int>(m_threshold),
-                      "bands", m_freq_bands,
-                      NULL);
-        gst_element_link (m_spectrum, m_sink);
-
-        gst_bus_add_signal_watch (m_bus);
-        g_signal_connect (m_bus, "message::eos", G_CALLBACK (on_eos_proxy), this);
-        g_signal_connect (m_bus, "message::info", G_CALLBACK (on_error_message), this);
-        g_signal_connect (m_bus, "message::warning", G_CALLBACK (on_error_message), this);
-        g_signal_connect (m_bus, "message::error", G_CALLBACK (on_error_message), this);
-        g_signal_connect (m_bus, "message::element", G_CALLBACK (on_element_message_proxy), this);
-    }
-
-    void parse_args (int &argc, char **&argv)
-    {
         OptionContext octx;
         octx.parse (argc, argv);
 
         if (argc != 2)
         {
             g_print ("%s\n", octx.get_help().c_str ());
-            throw std::runtime_error ("");
+            std::exit (0);
         }
 
         m_fileuri = argv[1];
@@ -167,8 +132,41 @@ public:
 
     int run ()
     {
-        gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
         try {
+            m_mainloop = Glib::MainLoop::create();
+            m_pipeline = gst_pipeline_new (0);
+            m_decoder = gst_element_factory_make ("uridecodebin", 0);
+            m_spectrum = gst_element_factory_make ("spectrum", 0);
+            m_sink = gst_element_factory_make ("fakesink", 0);
+            m_bus = gst_pipeline_get_bus (GST_PIPELINE (m_pipeline));
+
+            gst_bin_add_many (GST_BIN (m_pipeline),
+                              m_decoder, m_spectrum, m_sink, NULL);
+
+            g_object_set (m_decoder,
+                          "uri", Glib::filename_to_utf8 (m_fileuri).c_str (),
+                          NULL);
+            g_signal_connect (m_decoder, "pad-added",
+                              G_CALLBACK (on_pad_added_proxy), this);
+
+            g_object_set (m_spectrum,
+                          "post-messages", TRUE,
+                          "interval", static_cast<guint64>(SAMPLE_INTERVAL *
+                                                           static_cast<double>(GST_SECOND)),
+                          "threshold", static_cast<int>(m_threshold),
+                          "bands", m_freq_bands,
+                          NULL);
+            gst_element_link (m_spectrum, m_sink);
+
+            gst_bus_add_signal_watch (m_bus);
+            g_signal_connect (m_bus, "message::eos", G_CALLBACK (on_eos_proxy), this);
+            g_signal_connect (m_bus, "message::info", G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::warning", G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::error", G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::element", G_CALLBACK (on_element_message_proxy), this);
+
+            gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
+
             m_mainloop->run ();
         } catch (std::exception &e)
         {
