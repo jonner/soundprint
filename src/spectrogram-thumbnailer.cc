@@ -231,6 +231,7 @@ public:
             m_cr->set_source_rgb (1.0, 1.0, 1.0);
             m_cr->paint ();
         }
+        gst_caps_unref (caps);
     }
 
     static void on_error_message (GstBus *, GstMessage *message, gpointer)
