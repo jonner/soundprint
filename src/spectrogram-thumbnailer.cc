@@ -246,6 +246,9 @@ public:
         if (debug)
             g_print ("%s", debug);
 
+        if (message->type == GST_MESSAGE_ERROR)
+            throw std::runtime_error (debug);
+
         g_clear_error (&error);
         g_free (debug);
     }
