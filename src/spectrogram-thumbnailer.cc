@@ -301,8 +301,8 @@ public:
         int i;
 
         // the inflection point between the two halves of the alpha formula
-        const float TX = 0.65;
-        const float TY = 0.75;
+        const float TX = 0.6;
+        const float TY = 0.85;
         // multiplier for the first segment
         const float k = (1 / TX) * (1 / TX) * TY;
         // slope and offset of the second segment
