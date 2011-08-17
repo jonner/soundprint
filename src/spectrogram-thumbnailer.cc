@@ -123,7 +123,8 @@ public:
         m_freq_bands = std::min (static_cast<int>(2*m_thumbnail_size), 250);
 
         m_sample_height = m_thumbnail_size / m_freq_bands;
-        m_sample_width = m_thumbnail_size / (m_spectrogram_length / SAMPLE_INTERVAL);
+        m_sample_width = m_thumbnail_size / (m_spectrogram_length /
+                                             SAMPLE_INTERVAL);
     }
 
     ~App ()
@@ -161,11 +162,17 @@ public:
             gst_element_link (m_spectrum, m_sink);
 
             gst_bus_add_signal_watch (m_bus);
-            g_signal_connect (m_bus, "message::eos", G_CALLBACK (on_eos_proxy), this);
-            g_signal_connect (m_bus, "message::info", G_CALLBACK (on_error_message), this);
-            g_signal_connect (m_bus, "message::warning", G_CALLBACK (on_error_message), this);
-            g_signal_connect (m_bus, "message::error", G_CALLBACK (on_error_message), this);
-            g_signal_connect (m_bus, "message::element", G_CALLBACK (on_element_message_proxy), this);
+
+            g_signal_connect (m_bus, "message::eos",
+                              G_CALLBACK (on_eos_proxy), this);
+            g_signal_connect (m_bus, "message::info",
+                              G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::warning",
+                              G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::error",
+                              G_CALLBACK (on_error_message), this);
+            g_signal_connect (m_bus, "message::element",
+                              G_CALLBACK (on_element_message_proxy), this);
 
             gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
 
@@ -179,7 +186,9 @@ public:
         return 0;
     }
 
-    static void on_pad_added_proxy (GstElement *element, GstPad *pad, gpointer user_data)
+    static void on_pad_added_proxy (GstElement *element,
+                                    GstPad *pad,
+                                    gpointer user_data)
     {
         App *self = static_cast<App*>(user_data);
         self->on_pad_added (element, pad);
@@ -193,17 +202,18 @@ public:
 
         if (g_str_has_prefix (name, "audio/"))
         {
-            GstPad *spectrum_pad = gst_element_get_static_pad (m_spectrum, "sink");
+            GstPad *spectrum_pad =
+                gst_element_get_static_pad (m_spectrum, "sink");
+
             if (!gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
-            {
                 g_warning ("unable to link pad");
-            }
 
             // only process the first X seconds
             bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
                                              GST_SEEK_FLAG_FLUSH,
                                              GST_SEEK_TYPE_SET, 0,
-                                             GST_SEEK_TYPE_SET, m_spectrogram_length * GST_SECOND);
+                                             GST_SEEK_TYPE_SET,
+                                             m_spectrogram_length * GST_SECOND);
 
             if (!success)
                 g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
@@ -212,7 +222,8 @@ public:
 
             // Set up the drawing surface
             m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
-                                                     m_thumbnail_size, m_thumbnail_size);
+                                                     m_thumbnail_size,
+                                                     m_thumbnail_size);
             m_cr = Cairo::Context::create (m_surface);
             m_cr->translate (0, m_thumbnail_size);
             m_cr->scale (1.0, -1.0);
@@ -253,7 +264,9 @@ public:
         g_free (debug);
     }
 
-    static void on_eos_proxy (GstBus *bus, GstMessage *message, gpointer user_data)
+    static void on_eos_proxy (GstBus *bus,
+                              GstMessage *message,
+                              gpointer user_data)
     {
         App *self = static_cast<App*>(user_data);
         self->on_eos (bus, message);
@@ -267,7 +280,9 @@ public:
         m_mainloop->quit ();
     }
 
-    static void on_element_message_proxy (GstBus *bus, GstMessage *message, gpointer user_data)
+    static void on_element_message_proxy (GstBus *bus,
+                                          GstMessage *message,
+                                          gpointer user_data)
     {
         App *self = static_cast<App*>(user_data);
         const GstStructure *structure = gst_message_get_structure (message);
@@ -338,7 +353,8 @@ public:
                 // this is likely going to be quite slow.  it'd be much faster
                 // to simply access the imagesurface data and write to it
                 // directly
-                m_cr->rectangle (m_sample_no * m_sample_width, i * m_sample_height,
+                m_cr->rectangle (m_sample_no * m_sample_width,
+                                 i * m_sample_height,
                                  m_sample_width, m_sample_height);
                 m_cr->set_source_rgba (0.0, 0.0, 0.0, shade);
                 m_cr->fill ();
