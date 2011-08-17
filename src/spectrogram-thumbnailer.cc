@@ -24,6 +24,7 @@
 #include <gst/gst.h>
 
 const double DEFAULT_THUMBNAIL_SIZE = 128.0;
+const double DEFAULT_START_TIME = 0.0;
 const double DEFAULT_SPECTROGRAM_LENGTH = 5.0;
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
 const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
@@ -33,6 +34,12 @@ using Glib::ustring;
 class OptionEntry : public Glib::OptionEntry
 {
 public:
+    OptionEntry (const ustring &long_name = ustring(),
+                 const ustring &description = ustring())
+    {
+        set_long_name (long_name);
+        set_description (description);
+    }
     OptionEntry (gchar short_name,
                  const ustring &long_name = ustring(),
                  const ustring &description = ustring())
@@ -53,6 +60,7 @@ public:
           , m_length (DEFAULT_SPECTROGRAM_LENGTH)
           , m_threshold (DEFAULT_NOISE_THRESHOLD)
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
+          , m_start (DEFAULT_START_TIME)
     {
         add_entry (OptionEntry ('s', "size",
                                 ustring::compose ("Size in pixels of the generated thumbnail (default %1px)",
@@ -70,12 +78,17 @@ public:
                                          ustring::compose ("file name for generated thumbnail (default '%1')",
                                                            DEFAULT_OUTPUT_FILENAME)),
                             m_output_file);
+        add_entry (OptionEntry ("start",
+                                ustring::compose ("Start time for the spectrogram (default %1s)",
+                                                  DEFAULT_START_TIME)),
+                   m_start);
     }
 
     double m_size;
     double m_length;
     double m_threshold;
     std::string m_output_file;
+    double m_start;
 };
 
 class OptionContext : public Glib::OptionContext
@@ -116,6 +129,7 @@ public:
         m_threshold = octx.m_options.m_threshold;
         m_thumbnail_size = octx.m_options.m_size;
         m_spectrogram_length = octx.m_options.m_length;
+        m_start = octx.m_options.m_start;
 
         // set resolution to the number of pixels, but with a max limit at 250
         m_freq_bands = std::min (static_cast<int>(m_thumbnail_size), 250);
@@ -212,9 +226,10 @@ public:
             // only process the first X seconds
             bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
                                              GST_SEEK_FLAG_FLUSH,
-                                             GST_SEEK_TYPE_SET, 0,
                                              GST_SEEK_TYPE_SET,
-                                             m_spectrogram_length * GST_SECOND);
+                                             m_start * GST_SECOND,
+                                             GST_SEEK_TYPE_SET,
+                                             (m_start + m_spectrogram_length) * GST_SECOND);
 
             if (!success)
                 g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
@@ -369,6 +384,7 @@ private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
 
     double m_spectrogram_length;
+    double m_start;
     double m_threshold;
     double m_thumbnail_size;
     double m_sample_width;
