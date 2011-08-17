@@ -260,10 +260,6 @@ public:
     {
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
-        // give thumbnail a little frame
-        m_cr->set_source_rgb (0.0, 0.0, 0.0);
-        m_cr->rectangle (0.0, 0.0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-        m_cr->stroke ();
         m_surface->write_to_png (m_output_file);
         m_mainloop->quit ();
     }
