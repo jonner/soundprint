@@ -1,9 +1,9 @@
-AC_INIT([spectrogram-thumbnailer],
+AC_INIT([soundprint],
         [1],
         [jonathon@quotidian.org],
-        [spectrogram-thumbnailer])
+        [soundprint])
 
-AC_CONFIG_SRCDIR([src/spectrogram-thumbnailer.cc])
+AC_CONFIG_SRCDIR([src/soundprint.cc])
 AM_INIT_AUTOMAKE([foreign -Wno-portability no-define])
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_LANG(C++)
@@ -16,6 +16,6 @@ PKG_CHECK_MODULES(DEPS, [
 
 AC_CONFIG_FILES([
                  Makefile
-                 spectrogram-thumbnailer.thumbnailer
+                 soundprint.thumbnailer
                  ])
 AC_OUTPUT

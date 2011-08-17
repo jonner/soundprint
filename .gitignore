@@ -15,6 +15,5 @@ configure
 depcomp
 install-sh
 missing
-spectrogram-thumbnailer
-src/spectrogram_thumbnailer-spectrogram-thumbnailer.o
-spectrogram-thumbnailer.thumbnailer
+soundprint
+soundprint.thumbnailer
