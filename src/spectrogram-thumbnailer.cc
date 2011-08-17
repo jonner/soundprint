@@ -29,12 +29,14 @@ const double DEFAULT_SPECTROGRAM_LENGTH = 5.0;
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
 const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
 
+using Glib::ustring;
+
 class OptionEntry : public Glib::OptionEntry
 {
 public:
     OptionEntry (gchar short_name,
-                 const Glib::ustring &long_name = Glib::ustring(),
-                 const Glib::ustring &description = Glib::ustring())
+                 const ustring &long_name = ustring(),
+                 const ustring &description = ustring())
     {
         set_short_name (short_name);
         set_long_name (long_name);
@@ -54,20 +56,20 @@ public:
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
     {
         add_entry (OptionEntry ('s', "size",
-                                Glib::ustring::compose ("Size in pixels of the generated thumbnail (default %1px)",
-                                                        DEFAULT_THUMBNAIL_SIZE)),
+                                ustring::compose ("Size in pixels of the generated thumbnail (default %1px)",
+                                                  DEFAULT_THUMBNAIL_SIZE)),
                    m_size);
         add_entry (OptionEntry ('l', "length",
-                                Glib::ustring::compose ("Length (in seconds) of audio to use for thumbnail (default %1s)",
-                                                        DEFAULT_SPECTROGRAM_LENGTH)),
+                                ustring::compose ("Length (in seconds) of audio to use for thumbnail (default %1s)",
+                                                  DEFAULT_SPECTROGRAM_LENGTH)),
                    m_length);
         add_entry (OptionEntry ('t', "threshold",
-                                Glib::ustring::compose ("Noise threshold in dB (default -100)",
-                                                        DEFAULT_NOISE_THRESHOLD)),
+                                ustring::compose ("Noise threshold in dB (default -100)",
+                                                  DEFAULT_NOISE_THRESHOLD)),
                    m_threshold);
         add_entry_filename (OptionEntry ('o', "output",
-                                         Glib::ustring::compose ("file name for generated thumbnail (default '%1')",
-                                                                 DEFAULT_OUTPUT_FILENAME)),
+                                         ustring::compose ("file name for generated thumbnail (default '%1')",
+                                                           DEFAULT_OUTPUT_FILENAME)),
                             m_output_file);
     }
 
