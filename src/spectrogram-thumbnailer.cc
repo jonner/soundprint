@@ -23,27 +23,93 @@
 #include <glibmm.h>
 #include <gst/gst.h>
 
-const double SPECTROGRAM_LENGTH = 5.0;
 const double SAMPLE_INTERVAL = 0.01;
-const double THRESHOLD = -100.0;
-const int NUM_FREQ_BANDS = 100;
-const double THUMBNAIL_SIZE = 128.0;
-const double SAMPLE_WIDTH = THUMBNAIL_SIZE / (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL);
-const double SAMPLE_HEIGHT = THUMBNAIL_SIZE / NUM_FREQ_BANDS;
+const double DEFAULT_THUMBNAIL_SIZE = 128.0;
+const double DEFAULT_SPECTROGRAM_LENGTH = 5.0;
+const double DEFAULT_NOISE_THRESHOLD = -100.0;
+const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
+
+class OptionEntry : public Glib::OptionEntry
+{
+public:
+    OptionEntry (gchar short_name,
+                 const Glib::ustring &long_name = Glib::ustring(),
+                 const Glib::ustring &description = Glib::ustring())
+    {
+        set_short_name (short_name);
+        set_long_name (long_name);
+        set_description (description);
+    }
+};
+
+class AppOptions : public Glib::OptionGroup
+{
+public:
+    AppOptions (AppOptions&);
+    AppOptions ()
+        : Glib::OptionGroup ("application", "Application options")
+          , m_size (DEFAULT_THUMBNAIL_SIZE)
+          , m_length (DEFAULT_SPECTROGRAM_LENGTH)
+          , m_threshold (DEFAULT_NOISE_THRESHOLD)
+          , m_output_file (DEFAULT_OUTPUT_FILENAME)
+    {
+        add_entry (OptionEntry ('s', "size",
+                                Glib::ustring::compose ("Size in pixels of the generated thumbnail (default %1px)",
+                                                        DEFAULT_THUMBNAIL_SIZE)),
+                   m_size);
+        add_entry (OptionEntry ('l', "length",
+                                Glib::ustring::compose ("Length (in seconds) of audio to use for thumbnail (default %1s)",
+                                                        DEFAULT_SPECTROGRAM_LENGTH)),
+                   m_length);
+        add_entry (OptionEntry ('t', "threshold",
+                                Glib::ustring::compose ("Noise threshold in dB (default -100)",
+                                                        DEFAULT_NOISE_THRESHOLD)),
+                   m_threshold);
+        add_entry_filename (OptionEntry ('o', "output",
+                                         Glib::ustring::compose ("file name for generated thumbnail (default '%1')",
+                                                                 DEFAULT_OUTPUT_FILENAME)),
+                            m_output_file);
+    }
+
+    double m_size;
+    double m_length;
+    double m_threshold;
+    std::string m_output_file;
+};
+
+class OptionContext : public Glib::OptionContext
+{
+public:
+    OptionContext ()
+        : Glib::OptionContext ("FILE_URI")
+    {
+        set_main_group (m_options);
+        g_option_context_add_group (gobj (), gst_init_get_option_group ());
+    }
+
+    AppOptions m_options;
+};
 
 class App
 {
 public:
-    App (std::string& fileuri)
-    : m_mainloop (Glib::MainLoop::create())
-    , m_fileuri (fileuri)
-    , m_pipeline (gst_pipeline_new (0))
-    , m_decoder (gst_element_factory_make ("uridecodebin", 0))
-    , m_spectrum (gst_element_factory_make ("spectrum", 0))
-    , m_sink (gst_element_factory_make ("fakesink", 0))
-    , m_bus (gst_pipeline_get_bus (GST_PIPELINE (m_pipeline)))
+    App (int &argc, char** &argv)
+    : m_pipeline (0)
+    , m_decoder (0)
+    , m_spectrum (0)
+    , m_sink (0)
+    , m_bus (0)
     , m_sample_no (0)
     {
+        parse_args (argc, argv);
+
+        m_mainloop = Glib::MainLoop::create();
+        m_pipeline = gst_pipeline_new (0);
+        m_decoder = gst_element_factory_make ("uridecodebin", 0);
+        m_spectrum = gst_element_factory_make ("spectrum", 0);
+        m_sink = gst_element_factory_make ("fakesink", 0);
+        m_bus = gst_pipeline_get_bus (GST_PIPELINE (m_pipeline));
+
         gst_bin_add_many (GST_BIN (m_pipeline), m_decoder, m_spectrum, m_sink, NULL);
 
         g_object_set (m_decoder,
@@ -55,8 +121,8 @@ public:
                       "post-messages", TRUE,
                       "interval", static_cast<guint64>(SAMPLE_INTERVAL *
                                                        static_cast<double>(GST_SECOND)),
-                      "threshold", static_cast<int>(THRESHOLD),
-                      "bands", NUM_FREQ_BANDS,
+                      "threshold", static_cast<int>(m_threshold),
+                      "bands", m_freq_bands,
                       NULL);
         gst_element_link (m_spectrum, m_sink);
 
@@ -66,6 +132,31 @@ public:
         g_signal_connect (m_bus, "message::warning", G_CALLBACK (on_error_message), this);
         g_signal_connect (m_bus, "message::error", G_CALLBACK (on_error_message), this);
         g_signal_connect (m_bus, "message::element", G_CALLBACK (on_element_message_proxy), this);
+    }
+
+    void parse_args (int &argc, char **&argv)
+    {
+        OptionContext octx;
+        octx.parse (argc, argv);
+
+        if (argc != 2)
+        {
+            g_print ("%s\n", octx.get_help().c_str ());
+            throw std::runtime_error ("");
+        }
+
+        m_fileuri = argv[1];
+        m_output_file = octx.m_options.m_output_file;
+        m_threshold = octx.m_options.m_threshold;
+        m_thumbnail_size = octx.m_options.m_size;
+        m_spectrogram_length = octx.m_options.m_length;
+
+        // set resolution to double the number of pixels, but with a max
+        // limit at 250
+        m_freq_bands = std::min (static_cast<int>(2*m_thumbnail_size), 250);
+
+        m_sample_height = m_thumbnail_size / m_freq_bands;
+        m_sample_width = m_thumbnail_size / (m_spectrogram_length / SAMPLE_INTERVAL);
     }
 
     ~App ()
@@ -112,20 +203,18 @@ public:
             bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
                                              GST_SEEK_FLAG_FLUSH,
                                              GST_SEEK_TYPE_SET, 0,
-                                             GST_SEEK_TYPE_SET, SPECTROGRAM_LENGTH * GST_SECOND);
+                                             GST_SEEK_TYPE_SET, m_spectrogram_length * GST_SECOND);
 
             if (!success)
-                g_warning ("Failed to seek to first %g seconds", SPECTROGRAM_LENGTH);
+                g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
 
             gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
 
             // Set up the drawing surface
-            int h = SAMPLE_HEIGHT * NUM_FREQ_BANDS;
-            int w = (SPECTROGRAM_LENGTH / SAMPLE_INTERVAL) * SAMPLE_WIDTH;
             m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
-                                                     w, h);
+                                                     m_thumbnail_size, m_thumbnail_size);
             m_cr = Cairo::Context::create (m_surface);
-            m_cr->translate (0, h);
+            m_cr->translate (0, m_thumbnail_size);
             m_cr->scale (1.0, -1.0);
             m_cr->set_source_rgb (1.0, 1.0, 1.0);
             m_cr->paint ();
@@ -175,7 +264,7 @@ public:
         m_cr->set_source_rgb (0.0, 0.0, 0.0);
         m_cr->rectangle (0.0, 0.0, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
         m_cr->stroke ();
-        m_surface->write_to_png ("thumbnail.png");
+        m_surface->write_to_png (m_output_file);
         m_mainloop->quit ();
     }
 
@@ -228,7 +317,7 @@ public:
         {
             const GValue *floatval = gst_value_list_get_value (val, i);
             float v = g_value_get_float (floatval);
-            double shade = (v - THRESHOLD) / std::abs(THRESHOLD);
+            double shade = (v - m_threshold) / std::abs(m_threshold);
             // clamp value betwen 0.0 and 1.0, just in case
             shade = std::max (0.0, std::min (1.0, shade));
             if (shade > 0.0)
@@ -250,8 +339,8 @@ public:
                 // this is likely going to be quite slow.  it'd be much faster
                 // to simply access the imagesurface data and write to it
                 // directly
-                m_cr->rectangle (m_sample_no * SAMPLE_WIDTH, i * SAMPLE_HEIGHT,
-                                 SAMPLE_WIDTH, SAMPLE_HEIGHT);
+                m_cr->rectangle (m_sample_no * m_sample_width, i * m_sample_height,
+                                 m_sample_width, m_sample_height);
                 m_cr->set_source_rgba (0.0, 0.0, 0.0, shade);
                 m_cr->fill ();
             }
@@ -261,7 +350,17 @@ public:
 
 private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
-    Glib::ustring m_fileuri;
+
+    double m_spectrogram_length;
+    double m_threshold;
+    double m_thumbnail_size;
+    double m_sample_width;
+    double m_sample_height;
+    int m_freq_bands;
+
+    std::string m_fileuri;
+    std::string m_output_file;
+
     GstElement *m_pipeline;
     GstElement *m_decoder; // weak ref
     GstElement *m_spectrum; // weak ref
@@ -275,16 +374,8 @@ private:
 
 int main (int argc, char** argv)
 {
-    if (argc != 2)
-    {
-        g_print ("Usage: %s FILE_URI\n", argv[0]);
-        return 1;
-    }
-
-    gst_init (&argc, &argv);
     Glib::init ();
 
-    std::string uri = argv[1];
-    App app (uri);
+    App app (argc, argv);
     return app.run();
 }
