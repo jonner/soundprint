@@ -14,5 +14,8 @@ PKG_CHECK_MODULES(DEPS, [
                          cairomm-1.0
                          ])
 
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([
+                 Makefile
+                 spectrogram-thumbnailer.thumbnailer
+                 ])
 AC_OUTPUT
