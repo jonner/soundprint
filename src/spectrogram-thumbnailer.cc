@@ -23,7 +23,6 @@
 #include <glibmm.h>
 #include <gst/gst.h>
 
-const double SAMPLE_INTERVAL = 0.01;
 const double DEFAULT_THUMBNAIL_SIZE = 128.0;
 const double DEFAULT_SPECTROGRAM_LENGTH = 5.0;
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
@@ -118,13 +117,13 @@ public:
         m_thumbnail_size = octx.m_options.m_size;
         m_spectrogram_length = octx.m_options.m_length;
 
-        // set resolution to double the number of pixels, but with a max
-        // limit at 250
-        m_freq_bands = std::min (static_cast<int>(2*m_thumbnail_size), 250);
+        // set resolution to the number of pixels, but with a max limit at 250
+        m_freq_bands = std::min (static_cast<int>(m_thumbnail_size), 250);
+        // similar for the number of horizontal samples
+        m_num_samples = std::min (static_cast<int>(m_thumbnail_size), 250);
 
         m_sample_height = m_thumbnail_size / m_freq_bands;
-        m_sample_width = m_thumbnail_size / (m_spectrogram_length /
-                                             SAMPLE_INTERVAL);
+        m_sample_width = m_thumbnail_size / m_num_samples;
     }
 
     ~App ()
@@ -152,10 +151,12 @@ public:
             g_signal_connect (m_decoder, "pad-added",
                               G_CALLBACK (on_pad_added_proxy), this);
 
+            gint64 interval = (m_spectrogram_length /
+                               static_cast<double>(m_num_samples)) *
+                static_cast<double>(GST_SECOND);
             g_object_set (m_spectrum,
                           "post-messages", TRUE,
-                          "interval", static_cast<guint64>(SAMPLE_INTERVAL *
-                                                           static_cast<double>(GST_SECOND)),
+                          "interval", interval,
                           "threshold", static_cast<int>(m_threshold),
                           "bands", m_freq_bands,
                           NULL);
@@ -371,6 +372,7 @@ private:
     double m_thumbnail_size;
     double m_sample_width;
     double m_sample_height;
+    int m_num_samples;
     int m_freq_bands;
 
     std::string m_fileuri;
