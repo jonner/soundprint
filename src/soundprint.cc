@@ -209,6 +209,34 @@ public:
         self->on_pad_added (element, pad);
     }
 
+    bool start_pipeline ()
+    {
+        // only process the first X seconds
+        bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
+                                         GST_SEEK_FLAG_FLUSH,
+                                         GST_SEEK_TYPE_SET,
+                                         m_start * GST_SECOND,
+                                         GST_SEEK_TYPE_SET,
+                                         (m_start + m_spectrogram_length) * GST_SECOND);
+
+        if (!success)
+            g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
+
+        gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
+
+        // Set up the drawing surface
+        m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
+                                                 m_thumbnail_size,
+                                                 m_thumbnail_size);
+        m_cr = Cairo::Context::create (m_surface);
+        m_cr->translate (0, m_thumbnail_size);
+        m_cr->scale (1.0, -1.0);
+        m_cr->set_source_rgb (1.0, 1.0, 1.0);
+        m_cr->paint ();
+
+        return false;
+    }
+
     void on_pad_added (GstElement *, GstPad *pad)
     {
         GstCaps *caps = gst_pad_get_caps (pad);
@@ -223,28 +251,8 @@ public:
             if (!gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
                 g_warning ("unable to link pad");
 
-            // only process the first X seconds
-            bool success = gst_element_seek (m_pipeline, 1.0, GST_FORMAT_TIME,
-                                             GST_SEEK_FLAG_FLUSH,
-                                             GST_SEEK_TYPE_SET,
-                                             m_start * GST_SECOND,
-                                             GST_SEEK_TYPE_SET,
-                                             (m_start + m_spectrogram_length) * GST_SECOND);
-
-            if (!success)
-                g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
-
-            gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
-
-            // Set up the drawing surface
-            m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
-                                                     m_thumbnail_size,
-                                                     m_thumbnail_size);
-            m_cr = Cairo::Context::create (m_surface);
-            m_cr->translate (0, m_thumbnail_size);
-            m_cr->scale (1.0, -1.0);
-            m_cr->set_source_rgb (1.0, 1.0, 1.0);
-            m_cr->paint ();
+            Glib::signal_idle ().connect (sigc::mem_fun (this,
+                                                         &App::start_pipeline));
         }
         gst_caps_unref (caps);
     }
