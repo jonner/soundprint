@@ -138,6 +138,16 @@ public:
 
         m_sample_height = m_thumbnail_size / m_freq_bands;
         m_sample_width = m_thumbnail_size / m_num_samples;
+
+        // Set up the drawing surface
+        m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
+                                                 m_thumbnail_size,
+                                                 m_thumbnail_size);
+        m_cr = Cairo::Context::create (m_surface);
+        m_cr->translate (0, m_thumbnail_size);
+        m_cr->scale (1.0, -1.0);
+        m_cr->set_source_rgb (1.0, 1.0, 1.0);
+        m_cr->paint ();
     }
 
     ~App ()
@@ -223,16 +233,6 @@ public:
             g_warning ("Failed to seek to first %g seconds", m_spectrogram_length);
 
         gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
-
-        // Set up the drawing surface
-        m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
-                                                 m_thumbnail_size,
-                                                 m_thumbnail_size);
-        m_cr = Cairo::Context::create (m_surface);
-        m_cr->translate (0, m_thumbnail_size);
-        m_cr->scale (1.0, -1.0);
-        m_cr->set_source_rgb (1.0, 1.0, 1.0);
-        m_cr->paint ();
 
         return false;
     }
@@ -339,6 +339,8 @@ public:
 
     void on_spectrum (GstBus *, const GstStructure *structure)
     {
+        g_assert (m_cr);
+
         const GValue *val = gst_structure_get_value (structure, "magnitude");
         int size = gst_value_list_get_size (val);
         int i;
