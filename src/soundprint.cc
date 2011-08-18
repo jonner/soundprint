@@ -418,6 +418,18 @@ int main (int argc, char** argv)
 {
     Glib::init ();
 
-    App app (argc, argv);
-    return app.run();
+    try
+    {
+        App app (argc, argv);
+        return app.run();
+    }
+    catch (std::exception &e)
+    {
+        g_printerr ("%s\n", e.what ());
+    }
+    catch (Glib::Error &e)
+    {
+        g_printerr ("%s\n", e.what ().c_str ());
+    }
+    return 1;
 }
