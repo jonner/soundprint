@@ -114,6 +114,7 @@ public:
     , m_sink (0)
     , m_bus (0)
     , m_sample_no (0)
+    , m_prerolled (false)
     {
         OptionContext octx;
         octx.parse (argc, argv);
@@ -199,7 +200,14 @@ public:
             g_signal_connect (m_bus, "message::element",
                               G_CALLBACK (on_element_message_proxy), this);
 
-            gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
+            m_prerolled = (gst_element_set_state (m_pipeline, GST_STATE_PAUSED) ==
+                           GST_STATE_CHANGE_SUCCESS);
+
+            if (!m_prerolled)
+            {
+                g_signal_connect (m_bus, "message::async-done",
+                                  G_CALLBACK (on_async_done_proxy), this);
+            }
 
             m_mainloop->run ();
         } catch (std::exception &e)
@@ -251,8 +259,9 @@ public:
             if (!gst_pad_link (pad, spectrum_pad) == GST_PAD_LINK_OK)
                 g_warning ("unable to link pad");
 
-            Glib::signal_idle ().connect (sigc::mem_fun (this,
-                                                         &App::start_pipeline));
+            if (m_prerolled)
+                Glib::signal_idle ().connect (sigc::mem_fun (this,
+                                                             &App::start_pipeline));
         }
         gst_caps_unref (caps);
     }
@@ -390,6 +399,27 @@ public:
         ++m_sample_no;
     }
 
+    static void on_async_done_proxy (GstBus *bus,
+                                     GstMessage *message,
+                                     gpointer user_data)
+    {
+        App *self = static_cast<App*>(user_data);
+        self->on_async_done (bus, message);
+    }
+
+    void on_async_done (GstBus *, GstMessage *)
+    {
+        if (m_prerolled)
+            return;
+
+        m_prerolled = true;
+        start_pipeline ();
+        g_signal_handlers_disconnect_by_func (m_bus,
+                                              (gpointer)on_async_done_proxy,
+                                              this);
+    }
+
+
 private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
 
@@ -413,7 +443,9 @@ private:
 
     Cairo::RefPtr<Cairo::Surface> m_surface;
     Cairo::RefPtr<Cairo::Context> m_cr;
+
     int m_sample_no;
+    bool m_prerolled;
 };
 
 int main (int argc, char** argv)
