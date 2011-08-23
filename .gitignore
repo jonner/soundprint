@@ -1,11 +1,16 @@
 *.sw[op]
 *.[oa]
+*.l[oa]
 *~
 Makefile
 Makefile.in
 .deps
 .libs
 .dirstamp
+libtool
+ltmain.sh
+config.sub
+config.guess
 
 aclocal.m4
 autom4te.cache/
