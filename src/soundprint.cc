@@ -61,6 +61,7 @@ public:
           , m_threshold (DEFAULT_NOISE_THRESHOLD)
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
           , m_start (DEFAULT_START_TIME)
+          , m_benchmark (0)
     {
         add_entry (OptionEntry ('s', "size",
                                 ustring::compose ("Size in pixels of the generated thumbnail (default %1px)",
@@ -82,6 +83,9 @@ public:
                                 ustring::compose ("Start time for the spectrogram (default %1s)",
                                                   DEFAULT_START_TIME)),
                    m_start);
+        add_entry (OptionEntry ("benchmark",
+                                "Run the specified number of times and report average time spent"),
+                   m_benchmark);
     }
 
     double m_size;
@@ -89,6 +93,7 @@ public:
     double m_threshold;
     std::string m_output_file;
     double m_start;
+    int m_benchmark;
 };
 
 class OptionContext : public Glib::OptionContext
@@ -107,8 +112,18 @@ public:
 class App
 {
 public:
-    App (int &argc, char** &argv)
-    : m_pipeline (0)
+    App (const std::string & fileuri, AppOptions &options)
+    : m_spectrogram_length (options.m_length)
+    , m_start (options.m_start)
+    , m_threshold (options.m_threshold)
+    , m_thumbnail_size (options.m_size)
+    , m_sample_width (m_thumbnail_size / m_num_samples)
+    , m_sample_height (m_thumbnail_size / m_freq_bands)
+    , m_num_samples (m_thumbnail_size)
+    , m_freq_bands (m_thumbnail_size)
+    , m_fileuri (fileuri)
+    , m_output_file (options.m_output_file)
+    , m_pipeline (0)
     , m_decoder (0)
     , m_spectrum (0)
     , m_sink (0)
@@ -116,37 +131,11 @@ public:
     , m_sample_no (0)
     , m_prerolled (false)
     {
-        OptionContext octx;
-        octx.parse (argc, argv);
-
-        if (argc != 2)
-        {
-            g_print ("%s\n", octx.get_help().c_str ());
-            std::exit (0);
-        }
-
-        m_fileuri = argv[1];
-        m_output_file = octx.m_options.m_output_file;
-        m_threshold = octx.m_options.m_threshold;
-        m_thumbnail_size = octx.m_options.m_size;
-        m_spectrogram_length = octx.m_options.m_length;
-        m_start = octx.m_options.m_start;
-
-        // set resolution to the number of pixels, but with a max limit at 250
-        m_freq_bands = std::min (static_cast<int>(m_thumbnail_size), 250);
-        // similar for the number of horizontal samples
-        m_num_samples = std::min (static_cast<int>(m_thumbnail_size), 250);
-
-        m_sample_height = m_thumbnail_size / m_freq_bands;
-        m_sample_width = m_thumbnail_size / m_num_samples;
-
         // Set up the drawing surface
-        m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
+        m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24,
                                                  m_thumbnail_size,
                                                  m_thumbnail_size);
         m_cr = Cairo::Context::create (m_surface);
-        m_cr->translate (0, m_thumbnail_size);
-        m_cr->scale (1.0, -1.0);
         m_cr->set_source_rgb (1.0, 1.0, 1.0);
         m_cr->paint ();
     }
@@ -350,6 +339,12 @@ public:
     {
         g_assert (m_cr);
 
+        // if I ask for an interval that is equal to LENGTH/NUM_SAMPLES, this
+        // will result in NUM_SAMPLES+1 messages being emitted, so just ignore
+        // messages that are beyond our size.
+        if (m_sample_no > m_thumbnail_size)
+            return;
+
         const GValue *val = gst_structure_get_value (structure, "magnitude");
         int size = gst_value_list_get_size (val);
         int i;
@@ -362,16 +357,19 @@ public:
         // slope and offset of the second segment
         static const float m = (1.0 - TY) / (1.0 - TX);
         static const float b = TY - m * TX;
+        unsigned char *data = m_surface->get_data ();
+        const int stride = m_surface->format_stride_for_width (Cairo::FORMAT_RGB24, m_thumbnail_size);
 
-        for (i = 0; i < size; i++)
+        m_surface->flush ();
+        for (i = 0; i < size; ++i)
         {
             const GValue *floatval = gst_value_list_get_value (val, i);
             float v = g_value_get_float (floatval);
             double shade = (v - m_threshold) / std::abs(m_threshold);
-            // clamp value betwen 0.0 and 1.0, just in case
-            shade = std::max (0.0, std::min (1.0, shade));
             if (shade > 0.0)
             {
+                unsigned char *pixel = data + ((size - 1 - i) * stride) +
+                    m_sample_no * sizeof (guint32);
                 // Try to decrease the background noise a bit while making the
                 // foreground noise stand out a bit better.  From 0 to T, we
                 // use a parabolic (squared) slope to de-emphasize the lower
@@ -386,16 +384,13 @@ public:
                     shade = m * shade + b;
                 }
 
-                // this is likely going to be quite slow.  it'd be much faster
-                // to simply access the imagesurface data and write to it
-                // directly
-                m_cr->rectangle (m_sample_no * m_sample_width,
-                                 i * m_sample_height,
-                                 m_sample_width, m_sample_height);
-                m_cr->set_source_rgba (0.0, 0.0, 0.0, shade);
-                m_cr->fill ();
+                // clamp value betwen 0.0 and 1.0, just in case
+                unsigned int byte = 0xFF - (std::max (0.0, std::min (1.0, shade)) * 0xFF);
+
+                memset (pixel, byte, sizeof (guint32));
             }
         }
+        m_surface->mark_dirty ();
         ++m_sample_no;
     }
 
@@ -441,7 +436,7 @@ private:
     GstElement *m_sink; // weak ref
     GstBus *m_bus;
 
-    Cairo::RefPtr<Cairo::Surface> m_surface;
+    Cairo::RefPtr<Cairo::ImageSurface> m_surface;
     Cairo::RefPtr<Cairo::Context> m_cr;
 
     int m_sample_no;
@@ -454,8 +449,35 @@ int main (int argc, char** argv)
 
     try
     {
-        App app (argc, argv);
-        return app.run();
+        OptionContext octx;
+        octx.parse (argc, argv);
+
+        if (argc != 2)
+        {
+            g_print ("%s\n", octx.get_help().c_str ());
+            std::exit (0);
+        }
+
+        int iterations = octx.m_options.m_benchmark;
+
+        if (iterations > 0)
+        {
+            Glib::Timer timer;
+            for (int i = 0; i < octx.m_options.m_benchmark; ++i)
+            {
+                App app (argv[1], octx.m_options);
+                app.run();
+                g_print (".");
+            }
+            double elapsed = timer.elapsed ();
+            g_print ("\nTotal time elepased: %g\n", elapsed);
+            g_print ("Mean iteration time: %g\n", elapsed / iterations);
+        }
+        else
+        {
+            App app (argv[1], octx.m_options);
+            return app.run();
+        }
     }
     catch (std::exception &e)
     {
