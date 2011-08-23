@@ -2,6 +2,7 @@
  * Copyright (C) <1999> Erik Walthinsen <omega@cse.ogi.edu>
  *               <2006,2011> Stefan Kost <ensonic@users.sf.net>
  *               <2007-2009> Sebastian Dröge <sebastian.droege@collabora.co.uk>
+ *               <2011> Jonathon Jongsma <jonathon@quotidian.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,81 +22,13 @@
 /**
  * SECTION:element-spectrum
  *
- * The Spectrum element analyzes the frequency spectrum of an audio signal.
- * If the #GstSpectrum:post-messages property is #TRUE, it sends analysis results
- * as application messages named
- * <classname>&quot;spectrum&quot;</classname> after each interval of time given
- * by the #GstSpectrum:interval property.
- *
- * The message's structure contains some combination of these fields:
- * <itemizedlist>
- * <listitem>
- *   <para>
- *   #GstClockTime
- *   <classname>&quot;timestamp&quot;</classname>:
- *   the timestamp of the buffer that triggered the message.
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstClockTime
- *   <classname>&quot;stream-time&quot;</classname>:
- *   the stream time of the buffer.
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstClockTime
- *   <classname>&quot;running-time&quot;</classname>:
- *   the running_time of the buffer.
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstClockTime
- *   <classname>&quot;duration&quot;</classname>:
- *   the duration of the buffer.
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstClockTime
- *   <classname>&quot;endtime&quot;</classname>:
- *   the end time of the buffer that triggered the message as stream time (this
- *   is deprecated, as it can be calculated from stream-time + duration)
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstValueList of #gfloat
- *   <classname>&quot;magnitude&quot;</classname>:
- *   the level for each frequency band in dB. All values below the value of the
- *   #GstSpectrum:threshold property will be set to the threshold. Only present
- *   if the #GstSpectrum:message-magnitude property is %TRUE.
- *   </para>
- * </listitem>
- * <listitem>
- *   <para>
- *   #GstValueList of #gfloat
- *   <classname>&quot;phase&quot;</classname>:
- *   The phase for each frequency band. The value is between -pi and pi. Only
- *   present if the #GstSpectrum:message-phase property is %TRUE.
- *   </para>
- * </listitem>
- * </itemizedlist>
+ * The Spectrogram element analyzes the frequency spectrum of an audio signal
+ * and produces a visualization of that signal in the form of a 'spectrogram'
  *
  * If #GstSpectrum:multi-channel property is set to true. magnitude and phase
  * fields will be each a nested #GstValueArray. The first dimension are the
  * channels and the second dimension are the values.
  *
- * <refsect2>
- * <title>Example application</title>
- * |[
- * <xi:include xmlns:xi="http://www.w3.org/2003/XInclude" parse="text" href="../../../../tests/examples/spectrum/spectrum-example.c" />
- * ]|
- * </refsect2>
- *
- * Last reviewed on 2011-03-10 (0.10.29)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -140,10 +73,6 @@ GST_DEBUG_CATEGORY_STATIC (gst_spectrum_debug);
     " channels = (int) [ 1, MAX ]"
 
 /* Spectrum properties */
-#define DEFAULT_MESSAGE			TRUE
-#define DEFAULT_POST_MESSAGES			TRUE
-#define DEFAULT_MESSAGE_MAGNITUDE	TRUE
-#define DEFAULT_MESSAGE_PHASE		FALSE
 #define DEFAULT_INTERVAL		(GST_SECOND / 10)
 #define DEFAULT_BANDS			128
 #define DEFAULT_THRESHOLD		-60
@@ -152,10 +81,6 @@ GST_DEBUG_CATEGORY_STATIC (gst_spectrum_debug);
 enum
 {
   PROP_0,
-  PROP_MESSAGE,
-  PROP_POST_MESSAGES,
-  PROP_MESSAGE_MAGNITUDE,
-  PROP_MESSAGE_PHASE,
   PROP_INTERVAL,
   PROP_BANDS,
   PROP_THRESHOLD,
@@ -183,12 +108,13 @@ gst_spectrum_base_init (gpointer g_class)
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
   GstCaps *caps;
 
-  gst_element_class_set_details_simple (element_class, "Spectrum analyzer",
-      "Filter/Analyzer/Audio/Visualization",
-      "Run an FFT on the audio signal, output spectrum data",
+  gst_element_class_set_details_simple (element_class, "Spectrogram",
+      "Visualization",
+      "Run an FFT on the audio signal, visualize spectrogram data",
       "Erik Walthinsen <omega@cse.ogi.edu>, "
       "Stefan Kost <ensonic@users.sf.net>, "
-      "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
+      "Sebastian Dröge <sebastian.droege@collabora.co.uk>, "
+      "Jonathon Jongsma <jonathon@quotidian.org>");
 
   caps = gst_caps_from_string (ALLOWED_CAPS);
   gst_audio_filter_class_add_pad_templates (GST_AUDIO_FILTER_CLASS (g_class),
@@ -213,38 +139,6 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
   trans_class->passthrough_on_same_caps = TRUE;
 
   filter_class->setup = GST_DEBUG_FUNCPTR (gst_spectrum_setup);
-
-  /* FIXME 0.11, remove in favour of post-messages */
-  g_object_class_install_property (gobject_class, PROP_MESSAGE,
-      g_param_spec_boolean ("message", "Message",
-          "Whether to post a 'spectrum' element message on the bus for each "
-          "passed interval (deprecated, use post-messages)", DEFAULT_MESSAGE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  /**
-   * GstSpectrum:post-messages
-   *
-   * Post messages on the bus with spectrum information.
-   *
-   * Since: 0.10.17
-   */
-  g_object_class_install_property (gobject_class, PROP_POST_MESSAGES,
-      g_param_spec_boolean ("post-messages", "Post Messages",
-          "Whether to post a 'spectrum' element message on the bus for each "
-          "passed interval", DEFAULT_POST_MESSAGES,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_class, PROP_MESSAGE_MAGNITUDE,
-      g_param_spec_boolean ("message-magnitude", "Magnitude",
-          "Whether to add a 'magnitude' field to the structure of any "
-          "'spectrum' element messages posted on the bus",
-          DEFAULT_MESSAGE_MAGNITUDE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_class, PROP_MESSAGE_PHASE,
-      g_param_spec_boolean ("message-phase", "Phase",
-          "Whether to add a 'phase' field to the structure of any "
-          "'spectrum' element messages posted on the bus",
-          DEFAULT_MESSAGE_PHASE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_INTERVAL,
       g_param_spec_uint64 ("interval", "Interval",
@@ -282,9 +176,6 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
 static void
 gst_spectrum_init (GstSpectrum * spectrum, GstSpectrumClass * g_class)
 {
-  spectrum->post_messages = DEFAULT_POST_MESSAGES;
-  spectrum->message_magnitude = DEFAULT_MESSAGE_MAGNITUDE;
-  spectrum->message_phase = DEFAULT_MESSAGE_PHASE;
   spectrum->interval = DEFAULT_INTERVAL;
   spectrum->bands = DEFAULT_BANDS;
   spectrum->threshold = DEFAULT_THRESHOLD;
@@ -378,16 +269,6 @@ gst_spectrum_set_property (GObject * object, guint prop_id,
   GstSpectrum *filter = GST_SPECTRUM (object);
 
   switch (prop_id) {
-    case PROP_MESSAGE:
-    case PROP_POST_MESSAGES:
-      filter->post_messages = g_value_get_boolean (value);
-      break;
-    case PROP_MESSAGE_MAGNITUDE:
-      filter->message_magnitude = g_value_get_boolean (value);
-      break;
-    case PROP_MESSAGE_PHASE:
-      filter->message_phase = g_value_get_boolean (value);
-      break;
     case PROP_INTERVAL:{
       guint64 interval = g_value_get_uint64 (value);
       if (filter->interval != interval) {
@@ -434,16 +315,6 @@ gst_spectrum_get_property (GObject * object, guint prop_id,
   GstSpectrum *filter = GST_SPECTRUM (object);
 
   switch (prop_id) {
-    case PROP_MESSAGE:
-    case PROP_POST_MESSAGES:
-      g_value_set_boolean (value, filter->post_messages);
-      break;
-    case PROP_MESSAGE_MAGNITUDE:
-      g_value_set_boolean (value, filter->message_magnitude);
-      break;
-    case PROP_MESSAGE_PHASE:
-      g_value_set_boolean (value, filter->message_phase);
-      break;
     case PROP_INTERVAL:
       g_value_set_uint64 (value, filter->interval);
       break;
@@ -806,119 +677,6 @@ gst_spectrum_setup (GstAudioFilter * base, GstRingBufferSpec * format)
   return TRUE;
 }
 
-static GValue *
-gst_spectrum_message_add_container (GstStructure * s, GType type,
-    const gchar * name)
-{
-  GValue v = { 0, };
-
-  g_value_init (&v, type);
-  /* will copy-by-value */
-  gst_structure_set_value (s, name, &v);
-  g_value_unset (&v);
-  return (GValue *) gst_structure_get_value (s, name);
-}
-
-static void
-gst_spectrum_message_add_list (GValue * cv, gfloat * data, guint num_values)
-{
-  GValue v = { 0, };
-  guint i;
-
-  g_value_init (&v, G_TYPE_FLOAT);
-  for (i = 0; i < num_values; i++) {
-    g_value_set_float (&v, data[i]);
-    gst_value_list_append_value (cv, &v);       /* copies by value */
-  }
-  g_value_unset (&v);
-}
-
-static void
-gst_spectrum_message_add_array (GValue * cv, gfloat * data, guint num_values)
-{
-  GValue v = { 0, };
-  GValue a = { 0, };
-  guint i;
-
-  g_value_init (&a, GST_TYPE_ARRAY);
-
-  g_value_init (&v, G_TYPE_FLOAT);
-  for (i = 0; i < num_values; i++) {
-    g_value_set_float (&v, data[i]);
-    gst_value_array_append_value (&a, &v);      /* copies by value */
-  }
-  g_value_unset (&v);
-
-  gst_value_array_append_value (cv, &a);        /* copies by value */
-  g_value_unset (&a);
-}
-
-static GstMessage *
-gst_spectrum_message_new (GstSpectrum * spectrum, GstClockTime timestamp,
-    GstClockTime duration)
-{
-  GstBaseTransform *trans = GST_BASE_TRANSFORM_CAST (spectrum);
-  GstSpectrumChannel *cd;
-  GstStructure *s;
-  GValue *mcv = NULL, *pcv = NULL;
-  GstClockTime endtime, running_time, stream_time;
-
-  GST_DEBUG_OBJECT (spectrum, "preparing message, bands =%d ", spectrum->bands);
-
-  running_time = gst_segment_to_running_time (&trans->segment, GST_FORMAT_TIME,
-      timestamp);
-  stream_time = gst_segment_to_stream_time (&trans->segment, GST_FORMAT_TIME,
-      timestamp);
-  /* endtime is for backwards compatibility */
-  endtime = stream_time + duration;
-
-  s = gst_structure_new ("spectrogram",
-      "endtime", GST_TYPE_CLOCK_TIME, endtime,
-      "timestamp", G_TYPE_UINT64, timestamp,
-      "stream-time", G_TYPE_UINT64, stream_time,
-      "running-time", G_TYPE_UINT64, running_time,
-      "duration", G_TYPE_UINT64, duration, NULL);
-
-  if (!spectrum->multi_channel) {
-    cd = &spectrum->channel_data[0];
-
-    if (spectrum->message_magnitude) {
-      /* FIXME 0.11: this should be an array, not a list */
-      mcv = gst_spectrum_message_add_container (s, GST_TYPE_LIST, "magnitude");
-      gst_spectrum_message_add_list (mcv, cd->spect_magnitude, spectrum->bands);
-    }
-    if (spectrum->message_phase) {
-      /* FIXME 0.11: this should be an array, not a list */
-      pcv = gst_spectrum_message_add_container (s, GST_TYPE_LIST, "phase");
-      gst_spectrum_message_add_list (pcv, cd->spect_phase, spectrum->bands);
-    }
-  } else {
-    guint c;
-    guint channels = GST_AUDIO_FILTER (spectrum)->format.channels;
-
-    if (spectrum->message_magnitude) {
-      mcv = gst_spectrum_message_add_container (s, GST_TYPE_ARRAY, "magnitude");
-    }
-    if (spectrum->message_phase) {
-      pcv = gst_spectrum_message_add_container (s, GST_TYPE_ARRAY, "phase");
-    }
-
-    for (c = 0; c < channels; c++) {
-      cd = &spectrum->channel_data[c];
-
-      if (spectrum->message_magnitude) {
-        gst_spectrum_message_add_array (mcv, cd->spect_magnitude,
-            spectrum->bands);
-      }
-      if (spectrum->message_phase) {
-        gst_spectrum_message_add_array (pcv, cd->spect_magnitude,
-            spectrum->bands);
-      }
-    }
-  }
-  return gst_message_new_element (GST_OBJECT (spectrum), s);
-}
-
 static void
 gst_spectrum_run_fft (GstSpectrum * spectrum, GstSpectrumChannel * cd,
     guint input_pos)
@@ -926,11 +684,8 @@ gst_spectrum_run_fft (GstSpectrum * spectrum, GstSpectrumChannel * cd,
   guint i;
   guint bands = spectrum->bands;
   guint nfft = 2 * bands - 2;
-  gint threshold = spectrum->threshold;
   gfloat *input = cd->input;
   gfloat *input_tmp = cd->input_tmp;
-  gfloat *spect_magnitude = cd->spect_magnitude;
-  gfloat *spect_phase = cd->spect_phase;
   GstFFTF32Complex *freqdata = cd->freqdata;
   GstFFTF32 *fft_ctx = cd->fft_ctx;
 
@@ -940,47 +695,6 @@ gst_spectrum_run_fft (GstSpectrum * spectrum, GstSpectrumChannel * cd,
   gst_fft_f32_window (fft_ctx, input_tmp, GST_FFT_WINDOW_HAMMING);
 
   gst_fft_f32_fft (fft_ctx, input_tmp, freqdata);
-
-  if (spectrum->message_magnitude) {
-    gdouble val;
-    /* Calculate magnitude in db */
-    for (i = 0; i < bands; i++) {
-      val = freqdata[i].r * freqdata[i].r;
-      val += freqdata[i].i * freqdata[i].i;
-      val /= nfft * nfft;
-      val = 10.0 * log10 (val);
-      if (val < threshold)
-        val = threshold;
-      spect_magnitude[i] += val;
-    }
-  }
-
-  if (spectrum->message_phase) {
-    /* Calculate phase */
-    for (i = 0; i < bands; i++)
-      spect_phase[i] += atan2 (freqdata[i].i, freqdata[i].r);
-  }
-}
-
-static void
-gst_spectrum_prepare_message_data (GstSpectrum * spectrum,
-    GstSpectrumChannel * cd)
-{
-  guint i;
-  guint bands = spectrum->bands;
-  guint num_fft = spectrum->num_fft;
-
-  /* Calculate average */
-  if (spectrum->message_magnitude) {
-    gfloat *spect_magnitude = cd->spect_magnitude;
-    for (i = 0; i < bands; i++)
-      spect_magnitude[i] /= num_fft;
-  }
-  if (spectrum->message_phase) {
-    gfloat *spect_phase = cd->spect_phase;
-    for (i = 0; i < bands; i++)
-      spect_phase[i] /= num_fft;
-  }
 }
 
 static void
@@ -1115,20 +829,6 @@ gst_spectrum_transform_ip (GstBaseTransform * trans, GstBuffer * buffer)
         spectrum->frames_todo++;
       }
       spectrum->accumulated_error += spectrum->error_per_interval;
-
-      if (spectrum->post_messages) {
-        GstMessage *m;
-
-        for (c = 0; c < output_channels; c++) {
-          cd = &spectrum->channel_data[c];
-          gst_spectrum_prepare_message_data (spectrum, cd);
-        }
-
-        m = gst_spectrum_message_new (spectrum, spectrum->message_ts,
-            spectrum->interval);
-
-        gst_element_post_message (GST_ELEMENT (spectrum), m);
-      }
 
       if (GST_CLOCK_TIME_IS_VALID (spectrum->message_ts))
         spectrum->message_ts +=
