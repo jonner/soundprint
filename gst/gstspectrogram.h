@@ -71,12 +71,14 @@ struct _GstSpectrogram
   GQueue *spectrogram_data;
 
   /* properties */
-  guint64 interval;             /* how many nanoseconds between emits */
+  guint64 interval;             /* how many nanoseconds between fft samples */
   guint64 frames_per_interval;  /* how many frames per interval */
   guint64 frames_todo;
   guint bands;                  /* number of spectrum bands */
   gint threshold;               /* energy level treshold */
   gboolean multi_channel;       /* send separate channel results */
+
+  gint video_count;
 
   guint64 num_frames;           /* frame count (1 sample per channel)
                                  * since last emit */

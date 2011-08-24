@@ -46,11 +46,12 @@ GST_DEBUG_CATEGORY_STATIC (gst_spectrogram_debug);
 /* elementfactory information */
 
 /* Spectrogram properties */
-#define DEFAULT_BANDS			128
-#define DEFAULT_THRESHOLD		-60
-#define DEFAULT_MULTI_CHANNEL		FALSE
 #define DEFAULT_WIDTH 320
 #define DEFAULT_HEIGHT 240
+#define DEFAULT_BANDS			DEFAULT_HEIGHT
+#define DEFAULT_THRESHOLD		-100
+#define DEFAULT_MULTI_CHANNEL		FALSE
+#define FFT_PER_VFRAME 10
 
 enum
 {
@@ -169,7 +170,7 @@ gst_spectrogram_src_setcaps (GstPad *pad, GstCaps *caps)
   g_free (caps_str);
 
   self->interval = gst_util_uint64_scale_int (GST_SECOND, self->fps_d,
-                                              self->fps_n);
+                                              FFT_PER_VFRAME * self->fps_n);
 
   return res;
 }
@@ -228,20 +229,6 @@ evacuate:
   return ret;
 }
 
-static gboolean
-gst_spectrogram_sink_event (GstPad *pad, GstEvent *event)
-{
-  /* FIXME: implement */
-  return TRUE;
-}
-
-static gboolean
-gst_spectrogram_src_event (GstPad *pad, GstEvent *event)
-{
-  /* FIXME: implement */
-  return TRUE;
-}
-
 static void
 gst_spectrogram_init (GstSpectrogram *self, GstSpectrogramClass * g_class)
 {
@@ -251,20 +238,13 @@ gst_spectrogram_init (GstSpectrogram *self, GstSpectrogramClass * g_class)
   self->sinkpad = gst_pad_new_from_static_template (&sink_template, "sink");
   gst_pad_set_chain_function (self->sinkpad,
                               GST_DEBUG_FUNCPTR (gst_spectrogram_chain));
-  gst_pad_set_event_function (self->sinkpad,
-                              GST_DEBUG_FUNCPTR (gst_spectrogram_sink_event));
   gst_pad_set_setcaps_function (self->sinkpad,
                                 GST_DEBUG_FUNCPTR (gst_spectrogram_sink_setcaps));
   gst_element_add_pad (GST_ELEMENT (self), self->sinkpad);
 
   self->srcpad = gst_pad_new_from_static_template (&src_template, "src");
-  gst_pad_set_event_function (self->srcpad,
-                              GST_DEBUG_FUNCPTR (gst_spectrogram_src_event));
   gst_pad_set_setcaps_function (self->srcpad,
                                 GST_DEBUG_FUNCPTR (gst_spectrogram_src_setcaps));
-  /* FIXME: add latency to query ?? */
-  /*gst_pad_set_query_function (self->srcpad,
-                              GST_DEBUG_FUNCPTR (gst_spectrogram_src_query)); */
   gst_element_add_pad (GST_ELEMENT (self), self->srcpad);
 
   self->spectrogram_data = g_queue_new ();
@@ -330,6 +310,10 @@ gst_spectrogram_flush (GstSpectrogram * self)
   self->num_fft = 0;
 
   self->accumulated_error = 0;
+  while (!g_queue_is_empty (self->spectrogram_data)) {
+    gpointer slice = g_queue_pop_tail (self->spectrogram_data);
+    g_free (slice);
+  }
 }
 
 static void
@@ -488,6 +472,8 @@ static void
 gst_spectrogram_reset_message_data (GstSpectrogram * self,
     GstSpectrumChannel * cd)
 {
+  g_return_if_fail (cd != NULL);
+
   guint bands = self->bands;
   gfloat *spect_magnitude = cd->spect_magnitude;
   gfloat *spect_phase = cd->spect_phase;
@@ -497,6 +483,41 @@ gst_spectrogram_reset_message_data (GstSpectrogram * self,
   memset (spect_phase, 0, bands * sizeof (gfloat));
 }
 
+static double
+scale_value (double val, double threshold)
+{
+  // the inflection point between the two halves of the alpha formula
+  const float TX = 0.6;
+  const float TY = 0.85;
+  // multiplier for the first segment
+  const float k = (1 / TX) * (1 / TX) * TY;
+  // slope and offset of the second segment
+  const float m = (1.0 - TY) / (1.0 - TX);
+  const float b = TY - m * TX;
+
+  val = CLAMP (val, threshold, 0.0);
+
+  double shade = (val - threshold) / abs(threshold);
+  if (shade > 0.0)
+  {
+    // Try to decrease the background noise a bit while making the
+    // foreground noise stand out a bit better.  From 0 to T, we
+    // use a parabolic (squared) slope to de-emphasize the lower
+    // levels, and from T and up, we simply map the aplitude
+    // directly to the alpha.
+    if (shade < TX)
+    {
+      shade = k * shade * shade;
+    }
+    else
+    {
+      shade = m * shade + b;
+    }
+  }
+
+  return shade;
+}
+
 static void
 gst_spectrogram_push_spectrum_data (GstSpectrogram *self)
 {
@@ -504,12 +525,13 @@ gst_spectrogram_push_spectrum_data (GstSpectrogram *self)
   int i;
   for (i = 0; i < self->height; i++) {
     guchar *d = slice + (i * 4);
-    gint band = (double)i / (double)self->height * self->bands;
-    gdouble level = (self->channel_data[0].spect_magnitude[band] -
-                     self->threshold) / abs(self->threshold);
-    d[0] = 0xff * level;
-    d[1] = 0xff * level;
-    d[2] = 0xff * level;
+    gint band = ((double)(self->height - (i + 1)) / self->height) * self->bands;
+    //gint band = self->bands - (1 + i);
+    gdouble level = (self->channel_data[0].spect_magnitude[band]);
+    guchar scaled = 0xff - (0xff * scale_value (level, self->threshold));
+    d[0] = scaled;
+    d[1] = scaled;
+    d[2] = scaled;
   }
 
   while (g_queue_get_length (self->spectrogram_data) >= self->width) {
@@ -537,7 +559,7 @@ gst_spectrogram_push_video_frame (GstSpectrogram *self)
 
   static guchar count = 0x1;
 
-  memset (buffer->data, 0x00, buffer_size);
+  memset (buffer->data, 0xff, buffer_size);
   int slices = g_queue_get_length (self->spectrogram_data);
   int i;
   for (i = 0; i < self->height; i++) {
@@ -552,6 +574,8 @@ gst_spectrogram_push_video_frame (GstSpectrogram *self)
     }
   }
   count++;
+
+  GST_BUFFER_TIMESTAMP (buffer) = self->message_ts;
 
   ret = gst_pad_push (self->srcpad, buffer);
 
@@ -616,8 +640,7 @@ gst_spectrogram_process_buffer (GstSpectrogram * self, GstBuffer * buffer)
     gst_spectrogram_flush (self);
   }
 
-  if (self->num_frames == 0)
-    self->message_ts = GST_BUFFER_TIMESTAMP (buffer);
+  self->message_ts = GST_BUFFER_TIMESTAMP (buffer);
 
   input_pos = self->input_pos;
   input_data = self->input_data;
@@ -678,13 +701,14 @@ gst_spectrogram_process_buffer (GstSpectrogram * self, GstBuffer * buffer)
       self->accumulated_error += self->error_per_interval;
 
       gst_spectrogram_push_spectrum_data (self);
-      ret = gst_spectrogram_push_video_frame (self);
 
-      if (GST_CLOCK_TIME_IS_VALID (self->message_ts))
-        self->message_ts +=
-            gst_util_uint64_scale (self->num_frames, GST_SECOND, rate);
+      if (self->video_count++ == (FFT_PER_VFRAME - 1)) {
+        gst_spectrogram_push_video_frame (self);
 
-      for (c = 0; c < channels; c++) {
+        self->video_count = 0;
+      }
+
+      for (c = 0; c < self->num_channels; c++) {
         cd = &self->channel_data[c];
         gst_spectrogram_reset_message_data (self, cd);
       }
