@@ -19,22 +19,22 @@
  */
 
 
-#ifndef __GST_SPECTRUM_H__
-#define __GST_SPECTRUM_H__
+#ifndef __GST_SPECTROGRAM_H__
+#define __GST_SPECTROGRAM_H__
 
 #include <gst/gst.h>
-#include <gst/audio/gstaudiofilter.h>
+#include <gst/base/gstadapter.h>
 #include <gst/fft/gstfftf32.h>
 
 G_BEGIN_DECLS
 
-#define GST_TYPE_SPECTRUM            (gst_spectrum_get_type())
-#define GST_SPECTRUM(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_SPECTRUM,GstSpectrum))
-#define GST_IS_SPECTRUM(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_SPECTRUM))
-#define GST_SPECTRUM_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_SPECTRUM,GstSpectrumClass))
-#define GST_IS_SPECTRUM_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_SPECTRUM))
-typedef struct _GstSpectrum GstSpectrum;
-typedef struct _GstSpectrumClass GstSpectrumClass;
+#define GST_TYPE_SPECTROGRAM            (gst_spectrogram_get_type())
+#define GST_SPECTROGRAM(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_SPECTROGRAM,GstSpectrogram))
+#define GST_IS_SPECTROGRAM(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_SPECTROGRAM))
+#define GST_SPECTROGRAM_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_SPECTROGRAM,GstSpectrogramClass))
+#define GST_IS_SPECTROGRAM_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_SPECTROGRAM))
+typedef struct _GstSpectrogram GstSpectrogram;
+typedef struct _GstSpectrogramClass GstSpectrogramClass;
 typedef struct _GstSpectrumChannel GstSpectrumChannel;
 
 typedef void (*GstSpectrumInputData)(const guint8 * in, gfloat * out,
@@ -50,9 +50,25 @@ struct _GstSpectrumChannel
   GstFFTF32 *fft_ctx;
 };
 
-struct _GstSpectrum
+struct _GstSpectrogram
 {
-  GstAudioFilter parent;
+  GstElement parent;
+
+  GstPad *sinkpad;
+  GstPad *srcpad;
+
+  /* input format */
+  gint rate;
+  gint format_channels;
+  gint bps;
+
+  /* output format */
+  gint width;
+  gint height;
+  gint fps_n;
+  gint fps_d;
+
+  GQueue *spectrogram_data;
 
   /* properties */
   guint64 interval;             /* how many nanoseconds between emits */
@@ -78,13 +94,13 @@ struct _GstSpectrum
   GstSpectrumInputData input_data;
 };
 
-struct _GstSpectrumClass
+struct _GstSpectrogramClass
 {
-  GstAudioFilterClass parent_class;
+  GstElementClass parent_class;
 };
 
-GType gst_spectrum_get_type (void);
+GType gst_spectrogram_get_type (void);
 
 G_END_DECLS
 
-#endif /* __GST_SPECTRUM_H__ */
+#endif /* __GST_SPECTROGRAM_H__ */
