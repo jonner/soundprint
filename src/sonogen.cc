@@ -24,10 +24,19 @@
 #include <gst/gst.h>
 
 const double DEFAULT_HEIGHT = 200.0;
+const double DEFAULT_WIDTH = 0.0;
 const double DEFAULT_RESOLUTION = 100.0; // pixels per second
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
 const double DEFAULT_MAX_FREQUENCY = 12000;
 const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
+const bool DEFAULT_DRAW_GRID = false;
+
+const double BORDER_WIDTH = 10.0;
+const double GRID_MARKER_LARGE = 6.0;
+const double GRID_MARKER_MED = 4.0;
+const double GRID_MARKER_SMALL = 2.0;
+const double GRID_ALPHA_DARK = 0.08;
+const double GRID_ALPHA_LIGHT = 0.04;
 
 using Glib::ustring;
 
@@ -57,16 +66,22 @@ public:
     AppOptions ()
         : Glib::OptionGroup ("application", "Application options")
           , m_height (DEFAULT_HEIGHT)
+          , m_width (DEFAULT_WIDTH)
           , m_resolution (DEFAULT_RESOLUTION)
           , m_threshold (DEFAULT_NOISE_THRESHOLD)
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
           , m_max_frequency (DEFAULT_MAX_FREQUENCY)
+          , m_draw_grid (DEFAULT_DRAW_GRID)
           , m_benchmark (0)
     {
-        add_entry (OptionEntry ('s', "size",
+        add_entry (OptionEntry ('h', "height",
                                 ustring::compose ("Size in pixels of the height of the spectrogram (default %1px)",
                                                   DEFAULT_HEIGHT)),
                    m_height);
+        add_entry (OptionEntry ('w', "width",
+                                ustring::compose ("Size in pixels of the width of the spectrogram (default unlimited)",
+                                                  DEFAULT_WIDTH)),
+                   m_width);
         add_entry (OptionEntry ('r', "resolution",
                                 ustring::compose ("Number of pixels per second of audio (default %1px)",
                                                   DEFAULT_RESOLUTION)),
@@ -79,6 +94,10 @@ public:
                                 ustring::compose ("The maximum frequency to plot on the sonogram (default %1)",
                                                   DEFAULT_MAX_FREQUENCY)),
                    m_max_frequency);
+        add_entry (OptionEntry ('g', "grid",
+                                ustring::compose ("Draw grid (default %1)",
+                                                  DEFAULT_DRAW_GRID)),
+                   m_draw_grid);
         add_entry_filename (OptionEntry ('o', "output",
                                          ustring::compose ("file name for generated thumbnail (default '%1')",
                                                            DEFAULT_OUTPUT_FILENAME)),
@@ -89,10 +108,12 @@ public:
     }
 
     double m_height;
+    double m_width;
     double m_resolution;
     double m_threshold;
     std::string m_output_file;
     double m_max_frequency;
+    bool m_draw_grid;
     int m_benchmark;
 };
 
@@ -115,10 +136,11 @@ public:
     App (const std::string & fileuri, AppOptions &options)
     : m_threshold (options.m_threshold)
     , m_height (options.m_height)
-    , m_num_samples (0)
+    , m_width (options.m_width)
     , m_resolution (options.m_resolution)
     , m_sampling_rate (0)
     , m_max_frequency (options.m_max_frequency)
+    , m_draw_grid (options.m_draw_grid)
     , m_fileuri (fileuri)
     , m_output_file (options.m_output_file)
     , m_pipeline (0)
@@ -147,9 +169,13 @@ public:
         g_debug("duration is %li", duration);
 
         //set up the cairo surface
-        m_num_samples = (m_resolution * GST_TIME_AS_SECONDS(duration));
+        double num_samples = (m_resolution * GST_TIME_AS_SECONDS(duration));
+
+        if (!m_width)
+            m_width = num_samples;
+
         m_surface = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32,
-                                                 m_num_samples,
+                                                 m_width,
                                                  m_height);
         m_cr = Cairo::Context::create (m_surface);
         m_cr->set_source_rgb (1.0, 1.0, 1.0);
@@ -319,21 +345,103 @@ public:
         g_free (debug);
     }
 
-    static void on_eos_proxy (GstBus *bus,
-                              GstMessage *message,
+    static void on_eos_proxy (GstBus *,
+                              GstMessage *,
                               gpointer user_data)
     {
         //g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
-        self->on_eos (bus, message);
+        self->finish ();
     }
 
-    void on_eos (GstBus *, GstMessage *)
+    void finish ()
     {
         //g_debug("%s", G_STRFUNC);
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
-        m_surface->write_to_png (m_output_file);
+        if (m_draw_grid)
+        {
+            double w = BORDER_WIDTH + m_width;
+            double h = BORDER_WIDTH + m_height;
+            Cairo::RefPtr<Cairo::ImageSurface> graph = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, w, h);
+            Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
+            // clear to white
+            cr->set_source_rgb (1.0, 1.0, 1.0);
+            cr->paint ();
+
+            cr->set_source(m_surface, BORDER_WIDTH, 0);
+            cr->paint();
+
+            cr->scale (1, -1);
+            cr->translate (0, -h);
+            // translate by 0.5 to be pixel-aligned
+            cr->translate(-0.5, -0.5);
+            cr->translate(BORDER_WIDTH, BORDER_WIDTH);
+
+            // draw main axes
+            cr->set_source_rgb(0.0, 0.0, 0.0);
+            cr->move_to(0, m_height);
+            cr->set_line_width(1.0);
+            cr->line_to (0, 0);
+            cr->line_to (m_width, 0);
+            cr->stroke();
+
+            // draw vertical graduations
+            double pxPerKhz = m_height / (m_max_frequency / 1000);
+            double nKhz = static_cast<int>(m_max_frequency / 1000);
+            for (int f = 1; f <= nKhz; f++)
+            {
+                cr->save();
+                double markerSize = GRID_MARKER_SMALL;
+                double gridAlpha = GRID_ALPHA_LIGHT;
+                if ((f % 10) == 0)
+                {
+                    markerSize = GRID_MARKER_LARGE;
+                    gridAlpha = GRID_ALPHA_DARK;
+                }
+                else if ((f % 5) == 0)
+                {
+                    markerSize = GRID_MARKER_MED;
+                    gridAlpha = GRID_ALPHA_DARK;
+                }
+
+                // align to pixel
+                int y = static_cast<int>(f * pxPerKhz);
+                cr->move_to (-markerSize, y);
+                cr->line_to (0, y);
+                cr->stroke();
+
+                // draw grid line with alph
+                cr->set_source_rgba(0.0, 0.0, 0.0, gridAlpha);
+                cr->move_to(0, y);
+                cr->line_to(m_width, y);
+                cr->stroke();
+
+                cr->restore();
+            }
+
+            // draw a line every second
+            int seconds = static_cast<int>(m_width / m_resolution);
+            for (int s = 1; s <= seconds; s++)
+            {
+                cr->save();
+                double markerSize = GRID_MARKER_MED;
+                if (s % 5 == 0)
+                    markerSize = GRID_MARKER_LARGE;
+
+                int x = static_cast<int>(m_resolution * s);
+                cr->move_to (x, -markerSize);
+                cr->line_to (x, 0);
+                cr->stroke();
+                cr->restore();
+            }
+
+            graph->write_to_png (m_output_file);
+        }
+        else
+        {
+            m_surface->write_to_png (m_output_file);
+        }
         m_mainloop->quit ();
     }
 
@@ -383,8 +491,11 @@ public:
         // if I ask for an interval that is equal to LENGTH/NUM_SAMPLES, this
         // will result in NUM_SAMPLES+1 messages being emitted, so just ignore
         // messages that are beyond our size.
-        if (m_sample_no > m_num_samples)
+        if (m_sample_no >= m_width)
+        {
+            finish();
             return;
+        }
 
         const GValue *val = gst_structure_get_value (structure, "magnitude");
         int size = gst_value_list_get_size (val);
@@ -402,7 +513,7 @@ public:
         static const float m = (1.0 - TY) / (1.0 - TX);
         static const float b = TY - m * TX;
         unsigned char *data = m_surface->get_data ();
-        const int stride = m_surface->format_stride_for_width (Cairo::FORMAT_ARGB32, m_num_samples);
+        const int stride = m_surface->format_stride_for_width (Cairo::FORMAT_ARGB32, m_width);
 
         m_surface->flush ();
         for (i = 0; i < size; ++i)
@@ -469,10 +580,11 @@ private:
     double m_spectrogram_length;
     double m_threshold;
     double m_height;
-    double m_num_samples;
+    double m_width;
     double m_resolution;
     int m_sampling_rate;
     double m_max_frequency;
+    bool m_draw_grid;
 
     std::string m_fileuri;
     std::string m_output_file;
