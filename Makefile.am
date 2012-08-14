@@ -1,12 +1,17 @@
 AUTOMAKE_OPTIONS=subdir-objects
 
 # thumbnailer program
-bin_PROGRAMS = soundprint
+bin_PROGRAMS = soundprint sonogen
 
 soundprint_SOURCES = src/soundprint.cc
 
 soundprint_CXXFLAGS=@SOUNDPRINT_CFLAGS@
 soundprint_LDADD=@SOUNDPRINT_LIBS@
+
+sonogen_SOURCES = src/sonogen.cc
+
+sonogen_CXXFLAGS=@SOUNDPRINT_CFLAGS@
+sonogen_LDADD=@SOUNDPRINT_LIBS@
 
 thumbnailerdir = $(datadir)/thumbnailers
 thumbnailer_DATA = soundprint.thumbnailer
