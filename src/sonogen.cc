@@ -642,7 +642,6 @@ public:
 private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
 
-    double m_spectrogram_length;
     double m_threshold;
     double m_height;
     double m_width;
