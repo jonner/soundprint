@@ -188,7 +188,7 @@ public:
 
     int run ()
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         try {
             m_mainloop = Glib::MainLoop::create();
             m_pipeline = gst_pipeline_new (0);
@@ -222,12 +222,12 @@ public:
                               G_CALLBACK (on_element_message_proxy), this);
 
             GstStateChangeReturn ret = gst_element_set_state (m_pipeline, GST_STATE_PAUSED);
-            //g_debug ("set_state return = %u", ret);
+            g_debug ("set_state return = %u", ret);
             m_prerolled = (ret == GST_STATE_CHANGE_SUCCESS);
 
             if (!m_prerolled)
             {
-                //g_debug("not prerolled, waiting for async-done");
+                g_debug("not prerolled, waiting for async-done");
                 g_signal_connect (m_bus, "message::async-done",
                                   G_CALLBACK (on_async_done_proxy), this);
             }
@@ -250,7 +250,7 @@ public:
                                     GstPad *pad,
                                     gpointer user_data)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         self->on_pad_added (element, pad);
     }
@@ -295,7 +295,7 @@ public:
 
     void on_pad_added (GstElement *, GstPad *pad)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         GstCaps *caps = gst_pad_get_caps (pad);
         GstStructure *structure = gst_caps_get_structure (caps, 0);
         const char *name = gst_structure_get_name (structure);
@@ -317,7 +317,7 @@ public:
 
     static void on_error_message (GstBus *, GstMessage *message, gpointer)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         GError *error = NULL;
         gchar *debug = NULL;
 
@@ -352,14 +352,14 @@ public:
                               GstMessage *,
                               gpointer user_data)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         self->finish ();
     }
 
     void finish ()
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
         if (m_draw_grid)
@@ -516,7 +516,6 @@ public:
                                           GstMessage *message,
                                           gpointer user_data)
     {
-        //g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         const GstStructure *structure = gst_message_get_structure (message);
         if (gst_structure_has_name (structure, "spectrum"))
@@ -548,7 +547,6 @@ public:
     void on_spectrum (GstBus *, const GstStructure *structure)
     {
 
-        //g_debug("%s", G_STRFUNC);
         if (!m_cr)
         {
             //g_debug("got 'spectrum' message before duration: %s", gst_structure_to_string(structure));
@@ -621,14 +619,14 @@ public:
                                      GstMessage *message,
                                      gpointer user_data)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
         self->on_async_done (bus, message);
     }
 
     void on_async_done (GstBus *, GstMessage *)
     {
-        //g_debug("%s", G_STRFUNC);
+        g_debug("%s", G_STRFUNC);
         if (m_prerolled)
             return;
 
