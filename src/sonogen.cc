@@ -79,29 +79,29 @@ public:
           , m_benchmark (0)
     {
         add_entry (OptionEntry ('h', "height",
-                                ustring::compose ("Size in pixels of the height of the sonogram (default %1px)",
+                                ustring::compose ("Height of the sonogram in pixels (default %1px)",
                                                   DEFAULT_HEIGHT)),
                    m_height);
         add_entry (OptionEntry ('w', "width",
-                                ustring::compose ("Size in pixels of the width of the sonogram (default unlimited)",
+                                ustring::compose ("Width of the sonogram in pixels (default unlimited)",
                                                   DEFAULT_WIDTH)),
                    m_width);
         add_entry (OptionEntry ('r', "resolution",
                                 ustring::compose ("Number of pixels per second of audio (default %1px)",
                                                   DEFAULT_RESOLUTION)),
                    m_resolution);
-        add_entry (OptionEntry ('t', "noise-threshold",
-                                ustring::compose ("Treat all signals below this noise threshold (in dB) as silence (default %1)",
+        add_entry (OptionEntry ('n', "noise-floor",
+                                ustring::compose ("Treat signals below this level (in dB) as silence (default %1)",
                                                   DEFAULT_NOISE_THRESHOLD)),
                    m_threshold);
         add_entry (OptionEntry ('f', "max-frequency",
-                                ustring::compose ("The maximum frequency to plot on the sonogram (default %1)",
+                                ustring::compose ("The maximum frequency of the sonogram (default %1)",
                                                   DEFAULT_MAX_FREQUENCY)),
                    m_max_frequency);
-        add_entry (OptionEntry ('g', "grid", "Draw grid"),
+        add_entry (OptionEntry ('g', "grid", "Draw axes and grid"),
                    m_draw_grid);
         add_entry_filename (OptionEntry ('o', "output",
-                                         ustring::compose ("File name for generated file (default '%1')",
+                                         ustring::compose ("Output image file name (default '%1')",
                                                            DEFAULT_OUTPUT_FILENAME)),
                             m_output_file);
         add_entry (OptionEntry ("benchmark",
@@ -119,6 +119,22 @@ public:
     int m_benchmark;
 };
 
+const char *desc =
+"This program allows you to generate a sonogram image in PNG\n\
+format for a given input audio file (or video file with an audio\n\
+track). The output can be customized in various ways, including\n\
+adjusting both the horizontal and vertical resolution of the\n\
+FFT, and the size of the image to be generated.\n\n\
+Note that if no width is specified, it will generate a sonogram\n\
+for the entire audio track, so the width of the generated image\n\
+will depend on the length of the audio.  If a width is given, it\n\
+will always generate an image of that width, even if the audio\n\
+ends before the width is reached.\n\n\
+Note that the height and width specifies only the dimensions of\n\
+the sonogram.  If the -g option is used to draw a grid, the size\n\
+of the generated image will be expanded to accomodate the\n\
+axes and grid.";
+
 class OptionContext : public Glib::OptionContext
 {
 public:
@@ -127,6 +143,8 @@ public:
     {
         set_main_group (m_options);
         g_option_context_add_group (gobj (), gst_init_get_option_group ());
+        set_summary("Generate a sonogram image from an audio file");
+        set_description(desc);
     }
 
     AppOptions m_options;
