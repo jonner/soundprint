@@ -20,6 +20,8 @@
  *******************************************************************************/
 
 #include <cairomm/cairomm.h>
+#include <pangomm/init.h>
+#include <pangomm.h>
 #include <glibmm.h>
 #include <gst/gst.h>
 
@@ -31,12 +33,13 @@ const double DEFAULT_MAX_FREQUENCY = 12000;
 const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
 const bool DEFAULT_DRAW_GRID = false;
 
-const double BORDER_WIDTH = 10.0;
 const double GRID_MARKER_LARGE = 6.0;
 const double GRID_MARKER_MED = 4.0;
 const double GRID_MARKER_SMALL = 2.0;
 const double GRID_ALPHA_DARK = 0.08;
 const double GRID_ALPHA_LIGHT = 0.04;
+const int FONT_SIZE = 7;
+const char* FONT_FAMILY = "monospace";
 
 using Glib::ustring;
 
@@ -361,22 +364,42 @@ public:
 
         if (m_draw_grid)
         {
-            double w = BORDER_WIDTH + m_width;
-            double h = BORDER_WIDTH + m_height;
+            Pango::FontDescription fd;
+            fd.set_family(FONT_FAMILY);
+            fd.set_absolute_size(FONT_SIZE * Pango::SCALE);
+            fd.set_weight(Pango::WEIGHT_NORMAL);
+            fd.set_stretch(Pango::STRETCH_CONDENSED);
+
+            double pxPerKhz = m_height / (m_max_frequency / 1000);
+            double nKhz = static_cast<int>(m_max_frequency / 1000);
+
+            double borderX, borderY;
+            // limit scope
+            {
+                Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(m_cr);
+                layout->set_font_description(fd);
+                layout->set_text(Glib::ustring::compose("%1k", nKhz));
+                Pango::Rectangle extents = layout->get_pixel_logical_extents();
+                borderX = GRID_MARKER_SMALL + extents.get_width() + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
+                borderY = GRID_MARKER_SMALL + extents.get_height() + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
+            }
+
+            double w = borderX + m_width;
+            double h = borderY + m_height;
             Cairo::RefPtr<Cairo::ImageSurface> graph = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, w, h);
             Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
             // clear to white
             cr->set_source_rgb (1.0, 1.0, 1.0);
             cr->paint ();
 
-            cr->set_source(m_surface, BORDER_WIDTH, 0);
+            cr->set_source(m_surface, borderX, 0);
             cr->paint();
 
             cr->scale (1, -1);
             cr->translate (0, -h);
             // translate by 0.5 to be pixel-aligned
             cr->translate(-0.5, -0.5);
-            cr->translate(BORDER_WIDTH, BORDER_WIDTH);
+            cr->translate(borderX, borderY);
 
             // draw main axes
             cr->set_source_rgb(0.0, 0.0, 0.0);
@@ -386,23 +409,25 @@ public:
             cr->line_to (m_width, 0);
             cr->stroke();
 
-            // draw vertical graduations
-            double pxPerKhz = m_height / (m_max_frequency / 1000);
-            double nKhz = static_cast<int>(m_max_frequency / 1000);
             for (int f = 1; f <= nKhz; f++)
             {
                 cr->save();
                 double markerSize = GRID_MARKER_SMALL;
                 double gridAlpha = GRID_ALPHA_LIGHT;
-                if ((f % 10) == 0)
-                {
-                    markerSize = GRID_MARKER_LARGE;
-                    gridAlpha = GRID_ALPHA_DARK;
-                }
-                else if ((f % 5) == 0)
+
+                // always draw text for the max frequency
+                bool drawText = (f == nKhz);
+
+                if ((f % 5) == 0)
                 {
                     markerSize = GRID_MARKER_MED;
                     gridAlpha = GRID_ALPHA_DARK;
+                    drawText = true;
+                }
+
+                if ((f % 10) == 0)
+                {
+                    markerSize = GRID_MARKER_LARGE;
                 }
 
                 // align to pixel
@@ -411,11 +436,27 @@ public:
                 cr->line_to (0, y);
                 cr->stroke();
 
-                // draw grid line with alph
+                // draw grid line with alpha
                 cr->set_source_rgba(0.0, 0.0, 0.0, gridAlpha);
                 cr->move_to(0, y);
                 cr->line_to(m_width, y);
                 cr->stroke();
+
+                if (drawText)
+                {
+                    Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(cr);
+                    layout->set_font_description(fd);
+                    layout->set_text(Glib::ustring::compose("%1k", f));
+                    Pango::Rectangle extents = layout->get_pixel_logical_extents();
+                    int tx = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL) - extents.get_width();
+                    int ty = std::min(y + (extents.get_height() / 2.0), m_height);
+                    cr->move_to (tx, ty);
+                    // revert inverted scale so that the text doesnt' get mirrored
+                    cr->scale(1, -1);
+                    layout->update_from_cairo_context(cr);
+                    cr->set_source_rgb(0.0, 0.0, 0.0);
+                    layout->show_in_cairo_context(cr);
+                }
 
                 cr->restore();
             }
@@ -429,10 +470,36 @@ public:
                 if (s % 5 == 0)
                     markerSize = GRID_MARKER_LARGE;
 
+                // draw text every N marks
+                int textN = 1;
+                if (m_resolution <= 10)
+                    textN = 10;
+                else if (m_resolution <= 30)
+                    textN = 5;
+
+                bool drawText = (s % textN) == 0;
+
                 int x = static_cast<int>(m_resolution * s);
                 cr->move_to (x, -markerSize);
                 cr->line_to (x, 0);
                 cr->stroke();
+
+                if (drawText)
+                {
+                    Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(cr);
+                    layout->set_font_description(fd);
+                    layout->set_text(Glib::ustring::compose("%1s", s));
+                    Pango::Rectangle extents = layout->get_pixel_logical_extents();
+                    int tx = std::min (x - (extents.get_width() / 2.0), m_width - extents.get_width());
+                    int ty = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL);
+                    cr->move_to (tx, ty);
+                    // revert inverted scale so that the text doesnt' get mirrored
+                    cr->scale(1, -1);
+                    layout->update_from_cairo_context(cr);
+                    cr->set_source_rgb(0.0, 0.0, 0.0);
+                    layout->show_in_cairo_context(cr);
+                }
+
                 cr->restore();
             }
 
@@ -605,6 +672,7 @@ private:
 int main (int argc, char** argv)
 {
     Glib::init ();
+    Pango::init ();
 
     try
     {

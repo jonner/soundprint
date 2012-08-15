@@ -15,6 +15,13 @@ PKG_CHECK_MODULES(SOUNDPRINT, [
                                cairomm-1.0
                                ])
 
+PKG_CHECK_MODULES(SONOGEN, [
+                               gstreamer-0.10
+                               glibmm-2.4
+                               cairomm-1.0
+                               pangomm-1.4
+                               ])
+
 PKG_CHECK_MODULES(SPECTROGRAM, [
                                 gstreamer-0.10
                                 gstreamer-plugins-base-0.10

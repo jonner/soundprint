@@ -10,8 +10,8 @@ soundprint_LDADD=@SOUNDPRINT_LIBS@
 
 sonogen_SOURCES = src/sonogen.cc
 
-sonogen_CXXFLAGS=@SOUNDPRINT_CFLAGS@
-sonogen_LDADD=@SOUNDPRINT_LIBS@
+sonogen_CXXFLAGS=@SONOGEN_CFLAGS@
+sonogen_LDADD=@SONOGEN_LIBS@
 
 thumbnailerdir = $(datadir)/thumbnailers
 thumbnailer_DATA = soundprint.thumbnailer
