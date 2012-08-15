@@ -31,7 +31,7 @@ const double DEFAULT_WIDTH = 0.0;
 const double DEFAULT_RESOLUTION = 100.0; // pixels per second
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
 const double DEFAULT_MAX_FREQUENCY = 12000;
-const char * DEFAULT_OUTPUT_FILENAME = "thumbnail.png";
+const char * DEFAULT_OUTPUT_FILENAME = "sonogram.png";
 const bool DEFAULT_DRAW_GRID = false;
 
 const double GRID_MARKER_LARGE = 6.0;
@@ -79,31 +79,29 @@ public:
           , m_benchmark (0)
     {
         add_entry (OptionEntry ('h', "height",
-                                ustring::compose ("Size in pixels of the height of the spectrogram (default %1px)",
+                                ustring::compose ("Size in pixels of the height of the sonogram (default %1px)",
                                                   DEFAULT_HEIGHT)),
                    m_height);
         add_entry (OptionEntry ('w', "width",
-                                ustring::compose ("Size in pixels of the width of the spectrogram (default unlimited)",
+                                ustring::compose ("Size in pixels of the width of the sonogram (default unlimited)",
                                                   DEFAULT_WIDTH)),
                    m_width);
         add_entry (OptionEntry ('r', "resolution",
                                 ustring::compose ("Number of pixels per second of audio (default %1px)",
                                                   DEFAULT_RESOLUTION)),
                    m_resolution);
-        add_entry (OptionEntry ('t', "threshold",
-                                ustring::compose ("Noise threshold in dB (default %1)",
+        add_entry (OptionEntry ('t', "noise-threshold",
+                                ustring::compose ("Treat all signals below this noise threshold (in dB) as silence (default %1)",
                                                   DEFAULT_NOISE_THRESHOLD)),
                    m_threshold);
         add_entry (OptionEntry ('f', "max-frequency",
                                 ustring::compose ("The maximum frequency to plot on the sonogram (default %1)",
                                                   DEFAULT_MAX_FREQUENCY)),
                    m_max_frequency);
-        add_entry (OptionEntry ('g', "grid",
-                                ustring::compose ("Draw grid (default %1)",
-                                                  DEFAULT_DRAW_GRID)),
+        add_entry (OptionEntry ('g', "grid", "Draw grid"),
                    m_draw_grid);
         add_entry_filename (OptionEntry ('o', "output",
-                                         ustring::compose ("file name for generated thumbnail (default '%1')",
+                                         ustring::compose ("File name for generated file (default '%1')",
                                                            DEFAULT_OUTPUT_FILENAME)),
                             m_output_file);
         add_entry (OptionEntry ("benchmark",
