@@ -23,6 +23,7 @@
 #include <pangomm/init.h>
 #include <pangomm.h>
 #include <glibmm.h>
+#include <giomm.h>
 #include <gst/gst.h>
 
 const double DEFAULT_HEIGHT = 200.0;
@@ -124,7 +125,7 @@ class OptionContext : public Glib::OptionContext
 {
 public:
     OptionContext ()
-        : Glib::OptionContext ("FILE_URI")
+        : Glib::OptionContext ("( FILE_URI | FILE_PATH )")
     {
         set_main_group (m_options);
         g_option_context_add_group (gobj (), gst_init_get_option_group ());
@@ -136,7 +137,7 @@ public:
 class App
 {
 public:
-    App (const std::string & fileuri, AppOptions &options)
+    App (const std::string & filearg, AppOptions &options)
     : m_threshold (options.m_threshold)
     , m_height (options.m_height)
     , m_width (options.m_width)
@@ -144,7 +145,6 @@ public:
     , m_sampling_rate (0)
     , m_max_frequency (options.m_max_frequency)
     , m_draw_grid (options.m_draw_grid)
-    , m_fileuri (fileuri)
     , m_output_file (options.m_output_file)
     , m_pipeline (0)
     , m_decoder (0)
@@ -155,6 +155,8 @@ public:
     , m_prerolled (false)
     {
         g_debug("%s", G_STRFUNC);
+        Glib::RefPtr<Gio::File> f = Gio::File::create_for_commandline_arg(filearg);
+        m_fileuri = f->get_uri();
     }
 
     ~App ()
@@ -670,6 +672,7 @@ private:
 int main (int argc, char** argv)
 {
     Glib::init ();
+    Gio::init ();
     Pango::init ();
 
     try
