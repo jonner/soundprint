@@ -30,7 +30,7 @@ const double DEFAULT_HEIGHT = 200.0;
 const double DEFAULT_WIDTH = 0.0;
 const double DEFAULT_RESOLUTION = 100.0; // pixels per second
 const double DEFAULT_DURATION = 0.0; // seconds
-const double DEFAULT_NOISE_THRESHOLD = -100.0;
+const double DEFAULT_NOISE_FLOOR = -100.0;
 const double DEFAULT_MAX_FREQUENCY = 12000;
 const char * DEFAULT_OUTPUT_FILENAME = "sonogram.png";
 const bool DEFAULT_DRAW_GRID = false;
@@ -74,7 +74,7 @@ public:
           , m_width (DEFAULT_WIDTH)
           , m_resolution (DEFAULT_RESOLUTION)
           , m_duration (DEFAULT_DURATION)
-          , m_threshold (DEFAULT_NOISE_THRESHOLD)
+          , m_noise_floor (DEFAULT_NOISE_FLOOR)
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
           , m_max_frequency (DEFAULT_MAX_FREQUENCY)
           , m_draw_grid (DEFAULT_DRAW_GRID)
@@ -98,8 +98,8 @@ public:
                    m_resolution);
         add_entry (OptionEntry ('n', "noise-floor",
                                 ustring::compose ("Treat signals below this level (in dB) as silence (default %1)",
-                                                  DEFAULT_NOISE_THRESHOLD)),
-                   m_threshold);
+                                                  DEFAULT_NOISE_FLOOR)),
+                   m_noise_floor);
         add_entry (OptionEntry ('f', "max-frequency",
                                 ustring::compose ("The maximum frequency of the sonogram (default %1)",
                                                   DEFAULT_MAX_FREQUENCY)),
@@ -119,7 +119,7 @@ public:
     double m_width;
     double m_resolution;
     double m_duration;
-    double m_threshold;
+    double m_noise_floor;
     std::string m_output_file;
     double m_max_frequency;
     bool m_draw_grid;
@@ -164,7 +164,7 @@ class App
 {
 public:
     App (const std::string & filearg, AppOptions &options)
-    : m_threshold (options.m_threshold)
+    : m_noise_floor (options.m_noise_floor)
     , m_height (options.m_height)
     , m_width (options.m_width)
     , m_resolution (options.m_resolution)
@@ -323,7 +323,7 @@ public:
             g_object_set (m_spectrum,
                           "post-messages", TRUE,
                           "interval", interval,
-                          "threshold", static_cast<int>(m_threshold),
+                          "threshold", static_cast<int>(m_noise_floor),
                           "bands", num_bands,
                           NULL);
         }
@@ -625,7 +625,7 @@ public:
         {
             const GValue *floatval = gst_value_list_get_value (val, i);
             float v = g_value_get_float (floatval);
-            double shade = (v - m_threshold) / std::abs(m_threshold);
+            double shade = (v - m_noise_floor) / std::abs(m_noise_floor);
             if (shade > 0.0)
             {
                 unsigned char *pixel = data + ((static_cast<int>(m_height) - 1 - i) * stride) +
@@ -682,7 +682,7 @@ public:
 private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
 
-    double m_threshold;
+    double m_noise_floor;
     double m_height;
     double m_width;
     double m_resolution;
