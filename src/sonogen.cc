@@ -222,9 +222,6 @@ public:
                                                  m_options.width,
                                                  m_options.height);
         m_cr = Cairo::Context::create (m_surface);
-        m_cr->set_source_rgb (1.0, 1.0, 1.0);
-        m_cr->paint ();
-
     }
 
     int run ()
@@ -403,6 +400,7 @@ public:
         g_debug("%s", G_STRFUNC);
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
+        Cairo::RefPtr<Cairo::ImageSurface> graph;
         if (m_options.draw_grid)
         {
             Pango::FontDescription fd;
@@ -427,15 +425,13 @@ public:
 
             double w = borderX + m_options.width;
             double h = borderY + m_options.height;
-            Cairo::RefPtr<Cairo::ImageSurface> graph = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, w, h);
+            graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, w, h);
             Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
             // clear to white
             cr->set_source_rgb (1.0, 1.0, 1.0);
             cr->paint ();
 
-            cr->set_source(m_surface, borderX, 0);
-            cr->paint();
-
+            cr->save();
             cr->scale (1, -1);
             cr->translate (0, -h);
             // translate by 0.5 to be pixel-aligned
@@ -471,6 +467,7 @@ public:
                     markerSize = GRID_MARKER_LARGE;
                 }
 
+                cr->save();
                 // align to pixel
                 int y = static_cast<int>(f * pxPerKhz);
                 cr->move_to (-markerSize, y);
@@ -482,6 +479,7 @@ public:
                 cr->move_to(0, y);
                 cr->line_to(m_options.width, y);
                 cr->stroke();
+                cr->restore();
 
                 if (drawText)
                 {
@@ -495,7 +493,6 @@ public:
                     // revert inverted scale so that the text doesnt' get mirrored
                     cr->scale(1, -1);
                     layout->update_from_cairo_context(cr);
-                    cr->set_source_rgb(0.0, 0.0, 0.0);
                     layout->show_in_cairo_context(cr);
                 }
 
@@ -543,13 +540,27 @@ public:
 
                 cr->restore();
             }
+            cr->restore();
+            cr->set_source(m_surface, borderX, 0);
+            cr->paint();
 
-            graph->write_to_png (m_options.output_file);
         }
         else
         {
-            m_surface->write_to_png (m_options.output_file);
+            // no grid, but the sono image is curently transparent, so paint it
+            // over a solid background
+            graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, m_options.width, m_options.height);
+            Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
+            // clear to white
+            cr->set_source_rgb (1.0, 1.0, 1.0);
+            cr->paint ();
+
+            // paint the sono image onto the new solid surface
+            cr->set_source(m_surface, 0, 0);
+            cr->paint();
         }
+
+        graph->write_to_png (m_options.output_file);
         m_mainloop->quit ();
     }
 
@@ -646,10 +657,10 @@ public:
                 }
 
                 // clamp value betwen 0.0 and 1.0, just in case
-                unsigned int byte = 0xFF - (std::max (0.0, std::min (1.0, shade)) * 0xFF);
+                unsigned int byte = (std::max (0.0, std::min (1.0, shade)) * 0xFF);
 
-                memset (pixel, byte, sizeof (guint32));
-                pixel[3] = 0xff;
+                memset (pixel, 0x0, sizeof (guint32));
+                pixel[3] = byte;
             }
         }
         m_surface->mark_dirty ();
