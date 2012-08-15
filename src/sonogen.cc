@@ -93,7 +93,7 @@ public:
                                 ustring::compose ("Noise threshold in dB (default %1)",
                                                   DEFAULT_NOISE_THRESHOLD)),
                    m_threshold);
-        add_entry (OptionEntry ("max-frequency",
+        add_entry (OptionEntry ('f', "max-frequency",
                                 ustring::compose ("The maximum frequency to plot on the sonogram (default %1)",
                                                   DEFAULT_MAX_FREQUENCY)),
                    m_max_frequency);
