@@ -29,6 +29,7 @@
 const double DEFAULT_HEIGHT = 200.0;
 const double DEFAULT_WIDTH = 0.0;
 const double DEFAULT_RESOLUTION = 100.0; // pixels per second
+const double DEFAULT_DURATION = 0.0; // seconds
 const double DEFAULT_NOISE_THRESHOLD = -100.0;
 const double DEFAULT_MAX_FREQUENCY = 12000;
 const char * DEFAULT_OUTPUT_FILENAME = "sonogram.png";
@@ -72,6 +73,7 @@ public:
           , m_height (DEFAULT_HEIGHT)
           , m_width (DEFAULT_WIDTH)
           , m_resolution (DEFAULT_RESOLUTION)
+          , m_duration (DEFAULT_DURATION)
           , m_threshold (DEFAULT_NOISE_THRESHOLD)
           , m_output_file (DEFAULT_OUTPUT_FILENAME)
           , m_max_frequency (DEFAULT_MAX_FREQUENCY)
@@ -86,6 +88,10 @@ public:
                                 ustring::compose ("Width of the sonogram in pixels (default unlimited)",
                                                   DEFAULT_WIDTH)),
                    m_width);
+        add_entry (OptionEntry ('d', "duration",
+                                ustring::compose ("Duration of the sonogram in seconds (default unlimited)",
+                                                  DEFAULT_DURATION)),
+                   m_duration);
         add_entry (OptionEntry ('r', "resolution",
                                 ustring::compose ("Number of pixels per second of audio (default %1px)",
                                                   DEFAULT_RESOLUTION)),
@@ -112,6 +118,7 @@ public:
     double m_height;
     double m_width;
     double m_resolution;
+    double m_duration;
     double m_threshold;
     std::string m_output_file;
     double m_max_frequency;
@@ -125,12 +132,15 @@ format for a given input audio file (or video file with an audio\n\
 track). The output can be customized in various ways, including\n\
 adjusting both the horizontal and vertical resolution of the\n\
 FFT, and the size of the image to be generated.\n\n\
-Note that if no width is specified, it will generate a sonogram\n\
+Note: only two of the options '--duration', '--resolution', and\n\
+'--width' can be specified at once.  If all three are specified,\n\
+'--resolution' will be ignored.\n\n\
+Note: if no width is specified, it will generate a sonogram\n\
 for the entire audio track, so the width of the generated image\n\
 will depend on the length of the audio.  If a width is given, it\n\
 will always generate an image of that width, even if the audio\n\
 ends before the width is reached.\n\n\
-Note that the height and width specifies only the dimensions of\n\
+Note: the height and width only specifies the dimensions of\n\
 the sonogram.  If the -g option is used to draw a grid, the size\n\
 of the generated image will be expanded to accomodate the\n\
 axes and grid.";
@@ -158,6 +168,7 @@ public:
     , m_height (options.m_height)
     , m_width (options.m_width)
     , m_resolution (options.m_resolution)
+    , m_duration (options.m_duration)
     , m_sampling_rate (0)
     , m_max_frequency (options.m_max_frequency)
     , m_draw_grid (options.m_draw_grid)
@@ -173,6 +184,15 @@ public:
         g_debug("%s", G_STRFUNC);
         Glib::RefPtr<Gio::File> f = Gio::File::create_for_commandline_arg(filearg);
         m_fileuri = f->get_uri();
+
+        if (m_duration && m_width)
+        {
+            m_resolution = m_width / m_duration;
+        }
+        else if (m_duration)
+        {
+            m_width = m_duration * m_resolution;
+        }
     }
 
     ~App ()
@@ -187,10 +207,12 @@ public:
         GstFormat format = GST_FORMAT_TIME;
         if (!gst_element_query_duration(m_pipeline, &format, &duration))
             throw std::runtime_error("Couldn't query duration");
-        g_debug("duration is %li", duration);
 
         //set up the cairo surface
-        double num_samples = (m_resolution * GST_TIME_AS_SECONDS(duration));
+        double seconds = GST_TIME_AS_SECONDS(duration);
+        double num_samples = (m_resolution * seconds);
+
+        g_debug("Total file duration is %g", seconds);
 
         if (!m_width)
             m_width = num_samples;
@@ -664,6 +686,7 @@ private:
     double m_height;
     double m_width;
     double m_resolution;
+    double m_duration;
     int m_sampling_rate;
     double m_max_frequency;
     bool m_draw_grid;
