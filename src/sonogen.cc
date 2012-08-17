@@ -306,7 +306,7 @@ public:
         } catch (std::exception &e)
         {
             gst_element_set_state (m_pipeline, GST_STATE_NULL);
-            g_printerr ("%s", e.what ());
+            g_error ("%s", e.what ());
             return 1;
         }
         return 0;
