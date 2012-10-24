@@ -320,7 +320,7 @@ public:
         {
             gst_element_set_state (m_pipeline, GST_STATE_NULL);
             g_error ("%s", e.what ());
-            return 1;
+            exit(1);
         }
         return 0;
     }
@@ -913,7 +913,7 @@ int main (int argc, char** argv)
         if (argc != 2)
         {
             g_print ("%s\n", octx.get_help().c_str ());
-            std::exit (0);
+            std::exit (1);
         }
 
         int iterations = octx.m_option_group.m_options.benchmark;
@@ -945,5 +945,5 @@ int main (int argc, char** argv)
     {
         g_error ("%s", e.what ().c_str ());
     }
-    return 1;
+    exit(1);
 }
