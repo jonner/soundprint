@@ -22,7 +22,10 @@
 #include <cairomm/cairomm.h>
 #include <pango/pangocairo.h>
 #include <glibmm.h>
+#ifdef ENABLE_GIO
 #include <giomm.h>
+#endif
+
 #include <gst/gst.h>
 
 const double DEFAULT_HEIGHT = 200.0;
@@ -214,8 +217,17 @@ public:
     , m_fd(pango_font_description_new())
     {
         g_debug("%s", G_STRFUNC);
+#ifdef ENABLE_GIO
         Glib::RefPtr<Gio::File> f = Gio::File::create_for_commandline_arg(filearg);
         m_fileuri = f->get_uri();
+#else
+        std::string abspath = filearg;
+        if (!Glib::path_is_absolute(filearg))
+        {
+            abspath = Glib::build_filename(Glib::get_current_dir(), filearg);
+        }
+        m_fileuri = Glib::filename_to_uri(abspath);
+#endif
 
         if (m_options.duration && m_options.width)
         {
@@ -903,7 +915,9 @@ private:
 int main (int argc, char** argv)
 {
     Glib::init ();
+#ifdef ENABLE_GIO
     Gio::init ();
+#endif
 
     try
     {
