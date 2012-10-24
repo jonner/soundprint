@@ -19,7 +19,7 @@ PKG_CHECK_MODULES(SONOGEN, [
                                gstreamer-0.10
                                glibmm-2.4
                                cairomm-1.0
-                               pangomm-1.4
+                               pangocairo
                                giomm-2.4
                                ])
 

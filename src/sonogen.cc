@@ -20,8 +20,7 @@
  *******************************************************************************/
 
 #include <cairomm/cairomm.h>
-#include <pangomm/init.h>
-#include <pangomm.h>
+#include <pango/pangocairo.h>
 #include <glibmm.h>
 #include <giomm.h>
 #include <gst/gst.h>
@@ -44,6 +43,16 @@ const int FONT_SIZE = 7;
 const char* FONT_FAMILY = "monospace";
 
 using Glib::ustring;
+
+static const char* format(const char* fmt, ...)
+{
+    static char m_buf[255];
+    va_list argp;
+    va_start(argp, fmt);
+    g_vsnprintf(m_buf, sizeof(m_buf), fmt, argp);
+    va_end(argp);
+    return m_buf;
+}
 
 // helper class to avoid mis-matched save()/restore() pairs.  Rely on scoping to
 // restore the context to the previously-saved graphics state. Also makes things
@@ -116,33 +125,32 @@ public:
         : Glib::OptionGroup ("application", "Application options")
     {
         add_entry (OptionEntry ('h', "height",
-                                ustring::compose ("Height of the sonogram in pixels (default %1px)",
+                                format("Height of the sonogram in pixels (default %fpx)",
                                                   DEFAULT_HEIGHT)),
                    m_options.height);
         add_entry (OptionEntry ('w', "width",
-                                ustring::compose ("Width of the sonogram in pixels (default unlimited)",
-                                                  DEFAULT_WIDTH)),
+                                "Width of the sonogram in pixels (default unlimited)"),
                    m_options.width);
         add_entry (OptionEntry ('d', "duration",
-                                ustring::compose ("Duration of the sonogram in seconds (default unlimited)",
+                                format("Duration of the sonogram in seconds (default unlimited)",
                                                   DEFAULT_DURATION)),
                    m_options.duration);
         add_entry (OptionEntry ('r', "resolution",
-                                ustring::compose ("Number of pixels per second of audio (default %1px)",
+                                format("Number of pixels per second of audio (default %fpx)",
                                                   DEFAULT_RESOLUTION)),
                    m_options.resolution);
         add_entry (OptionEntry ('n', "noise-floor",
-                                ustring::compose ("Treat signals below this level (in dB) as silence (default %1)",
+                                format("Treat signals below this level (in dB) as silence (default %f)",
                                                   DEFAULT_NOISE_FLOOR)),
                    m_options.noise_floor);
         add_entry (OptionEntry ('f', "max-frequency",
-                                ustring::compose ("The maximum frequency of the sonogram (default %1)",
+                                format("The maximum frequency of the sonogram (default %f)",
                                                   DEFAULT_MAX_FREQUENCY)),
                    m_options.max_frequency);
         add_entry (OptionEntry ('g', "grid", "Draw axes and grid"),
                    m_options.draw_grid);
         add_entry_filename (OptionEntry ('o', "output",
-                                         ustring::compose ("Output image file name (default '%1')",
+                                         format("Output image file name (default '%s')",
                                                            DEFAULT_OUTPUT_FILENAME)),
                             m_options.output_file);
         add_entry (OptionEntry ("benchmark",
@@ -203,6 +211,7 @@ public:
     , m_min_rms (options.noise_floor)
     , m_sample_no (0)
     , m_prerolled (false)
+    , m_fd(pango_font_description_new())
     {
         g_debug("%s", G_STRFUNC);
         Glib::RefPtr<Gio::File> f = Gio::File::create_for_commandline_arg(filearg);
@@ -217,16 +226,17 @@ public:
             m_options.width = m_options.duration * m_options.resolution;
         }
 
-        m_fd.set_family(FONT_FAMILY);
-        m_fd.set_absolute_size(FONT_SIZE * Pango::SCALE);
-        m_fd.set_weight(Pango::WEIGHT_NORMAL);
-        m_fd.set_stretch(Pango::STRETCH_CONDENSED);
+        pango_font_description_set_family(m_fd, FONT_FAMILY);
+        pango_font_description_set_absolute_size(m_fd, FONT_SIZE * PANGO_SCALE);
+        pango_font_description_set_weight(m_fd, PANGO_WEIGHT_NORMAL);
+        pango_font_description_set_stretch(m_fd, PANGO_STRETCH_CONDENSED);
     }
 
     ~App ()
     {
         g_object_unref (m_bus);
         g_object_unref (m_pipeline);
+        pango_font_description_free(m_fd);
     }
 
     void set_duration()
@@ -253,7 +263,6 @@ public:
 
     int run ()
     {
-        TIME_SCOPE;
         g_debug("%s", G_STRFUNC);
         try {
             m_mainloop = Glib::MainLoop::create();
@@ -450,19 +459,23 @@ public:
             // limit scope
             {
                 // measure width of frequency text
-                Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(m_cr);
-                layout->set_font_description(m_fd);
-                layout->set_text(Glib::ustring::compose("%1k", nKhz));
-                Pango::Rectangle extents = layout->get_pixel_logical_extents();
-                borderL = GRID_MARKER_SMALL + extents.get_width() + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
-                borderB = GRID_MARKER_LARGE + extents.get_height() + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
+                PangoLayout* layout = pango_cairo_create_layout(m_cr->cobj());
+                pango_layout_set_font_description(layout, m_fd);
+                pango_layout_set_text(layout, format("%fk", nKhz), -1);
+                PangoRectangle logical_extents;
+                pango_layout_get_extents(layout, NULL, &logical_extents);
+                double w = logical_extents.width / PANGO_SCALE;
+                double h = logical_extents.height / PANGO_SCALE;
+                borderL = GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
+                borderB = GRID_MARKER_LARGE + h + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
 
                 // now measure text for level (dB) axis
-                layout = Pango::Layout::create(m_cr);
-                layout->set_font_description(m_fd);
-                layout->set_text(Glib::ustring::compose("%1dB", m_options.noise_floor));
-                extents = layout->get_pixel_logical_extents();
-                borderL = std::max(GRID_MARKER_SMALL + extents.get_width() + GRID_MARKER_SMALL + GRID_MARKER_LARGE, borderL);
+                layout = pango_cairo_create_layout(m_cr->cobj());
+                pango_layout_set_font_description(layout, m_fd);
+                pango_layout_set_text(layout, format("%fdB", m_options.noise_floor), -1);
+                pango_layout_get_extents(layout, NULL, &logical_extents);
+                w = logical_extents.width / PANGO_SCALE;
+                borderL = std::max(GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE, borderL);
             }
 
             int seconds = static_cast<int>(m_options.width / m_options.resolution);
@@ -531,17 +544,20 @@ public:
 
                     if (drawText)
                     {
-                        Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(cr);
-                        layout->set_font_description(m_fd);
-                        layout->set_text(Glib::ustring::compose("%1k", f));
-                        Pango::Rectangle extents = layout->get_pixel_logical_extents();
-                        int tx = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL) - extents.get_width();
-                        int ty = std::min(y + (extents.get_height() / 2.0), m_options.height);
+                        PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
+                        pango_layout_set_font_description(layout, m_fd);
+                        pango_layout_set_text(layout, format("%ik", f), -1);
+                        PangoRectangle extents;
+                        pango_layout_get_extents(layout, NULL, &extents);
+                        double w = extents.width / PANGO_SCALE;
+                        double h = extents.height / PANGO_SCALE;
+                        int tx = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL) - w;
+                        int ty = std::min(y + (h / 2.0), m_options.height);
                         cr->move_to (tx, ty);
                         // revert inverted scale so that the text doesnt' get mirrored
                         cr->scale(1, -1);
-                        layout->update_from_cairo_context(cr);
-                        layout->show_in_cairo_context(cr);
+                        pango_cairo_update_layout (cr->cobj(), layout);
+                        pango_cairo_show_layout(cr->cobj(), layout);
                     }
                 }
 
@@ -571,18 +587,20 @@ public:
 
                         if (drawText)
                         {
-                            Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(cr);
-                            layout->set_font_description(m_fd);
-                            layout->set_text(Glib::ustring::compose("%1s", s));
-                            Pango::Rectangle extents = layout->get_pixel_logical_extents();
-                            int tx = std::min (x - (extents.get_width() / 2.0), m_options.width - extents.get_width());
+                            PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
+                            pango_layout_set_font_description(layout, m_fd);
+                            pango_layout_set_text(layout, format("%is", s), -1);
+                            PangoRectangle extents;
+                            pango_layout_get_extents(layout, NULL, &extents);
+                            double w = extents.width / PANGO_SCALE;
+                            int tx = std::min (x - (w / 2.0), m_options.width - w);
                             int ty = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL);
                             cr->move_to (tx, ty);
                             // revert inverted scale so that the text doesnt' get mirrored
                             cr->scale(1, -1);
-                            layout->update_from_cairo_context(cr);
+                            pango_cairo_update_layout (cr->cobj(), layout);
                             cr->set_source_rgb(0.0, 0.0, 0.0);
-                            layout->show_in_cairo_context(cr);
+                            pango_cairo_show_layout(cr->cobj(), layout);
                         }
                     }
                 }
@@ -652,18 +670,21 @@ public:
 
                     if (drawText)
                     {
-                        Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create(cr);
-                        layout->set_font_description(m_fd);
-                        layout->set_text(Glib::ustring::compose("%1dB", l));
-                        Pango::Rectangle extents = layout->get_pixel_logical_extents();
-                        int tx = - (GRID_MARKER_MED + GRID_MARKER_SMALL) - extents.get_width();
-                        int ty = std::max(y + (extents.get_height() / 2.0), -dbHeight + extents.get_height());
+                        PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
+                        pango_layout_set_font_description(layout, m_fd);
+                        pango_layout_set_text(layout, format("%idB", l), -1);
+                        PangoRectangle extents;
+                        pango_layout_get_extents(layout, NULL, &extents);
+                        double w = extents.width / PANGO_SCALE;
+                        double h = extents.height / PANGO_SCALE;
+                        int tx = - (GRID_MARKER_MED + GRID_MARKER_SMALL) - w;
+                        int ty = std::max(y + (h / 2.0), -dbHeight + h);
                         cr->move_to (tx, ty);
 
                         // revert inverted scale so that the text doesnt' get mirrored
                         cr->scale(1, -1);
-                        layout->update_from_cairo_context(cr);
-                        layout->show_in_cairo_context(cr);
+                        pango_cairo_update_layout (cr->cobj(), layout);
+                        pango_cairo_show_layout(cr->cobj(), layout);
                     }
                 }
             }
@@ -876,14 +897,13 @@ private:
 
     int m_sample_no;
     bool m_prerolled;
-    Pango::FontDescription m_fd;
+    PangoFontDescription* m_fd;
 };
 
 int main (int argc, char** argv)
 {
     Glib::init ();
     Gio::init ();
-    Pango::init ();
 
     try
     {
