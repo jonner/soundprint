@@ -606,7 +606,7 @@ public:
                 }
 
                 // draw dB levels
-                double dbRange = 80;
+                double dbRange = 70;
                 // add 1 here since we offset 0.5 above and otherwise the bottom
                 // axis would end up off the edge of the image
                 cr->translate(0.0, -borderB + 1);
@@ -650,13 +650,13 @@ public:
                 cr->stroke();
 
                 // draw level (dB) axis markers
-                for (int l = 0; l >= -dbRange; l-=20)
+                for (int l = 0; l >= -dbRange; l-=15)
                 {
                     ContextGuard gLevelAxis(cr);
                     bool drawText = false;
                     double markerSize = GRID_MARKER_SMALL;
 
-                    if ((l % 40) == 0)
+                    if ((l % 30) == 0)
                     {
                         markerSize = GRID_MARKER_MED;
                         drawText = true;
