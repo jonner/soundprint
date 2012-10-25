@@ -282,12 +282,13 @@ public:
             m_decoder = gst_element_factory_make ("uridecodebin", 0);
             m_convert = gst_element_factory_make ("audioconvert", 0);
             m_spectrum = gst_element_factory_make ("spectrum", 0);
+            m_filter = gst_element_factory_make ("audiocheblimit", 0);
             m_level = gst_element_factory_make ("level", 0);
             m_sink = gst_element_factory_make ("fakesink", 0);
             m_bus = gst_pipeline_get_bus (GST_PIPELINE (m_pipeline));
 
             gst_bin_add_many (GST_BIN (m_pipeline),
-                              m_decoder, m_convert, m_spectrum, m_level, m_sink, NULL);
+                              m_decoder, m_convert, m_spectrum, m_filter, m_level, m_sink, NULL);
 
             g_object_set (m_decoder,
                           "uri", Glib::filename_to_utf8 (m_fileuri).c_str (),
@@ -296,8 +297,14 @@ public:
                               G_CALLBACK (on_pad_added_proxy), this);
 
             gst_element_link (m_convert, m_spectrum);
-            gst_element_link (m_spectrum, m_level);
+            gst_element_link (m_spectrum, m_filter);
+            gst_element_link (m_filter, m_level);
             gst_element_link (m_level, m_sink);
+
+            g_object_set (m_filter,
+                          "mode", 1, // high-pass
+                          "cutoff", 440.0,
+                          NULL);
 
             gst_bus_add_signal_watch (m_bus);
 
@@ -897,6 +904,7 @@ private:
     GstElement *m_decoder; // weak ref
     GstElement *m_convert; // weak ref
     GstElement *m_spectrum; // weak ref
+    GstElement *m_filter; // weak ref
     GstElement *m_level; // weak ref
     GstElement *m_sink; // weak ref
     GstBus *m_bus;
