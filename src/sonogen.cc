@@ -772,24 +772,8 @@ public:
     // -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60, -60,
     // -60, -60 };
 
-    void on_spectrum (GstBus *, const GstStructure *structure)
+    void paint_spectrum_at_offset(const GValue *val, int offset)
     {
-        if (!m_cr)
-        {
-            //g_debug("got 'spectrum' message before duration: %s", gst_structure_to_string(structure));
-            return;
-        }
-
-        // if I ask for an interval that is equal to LENGTH/NUM_SAMPLES, this
-        // will result in NUM_SAMPLES+1 messages being emitted, so just ignore
-        // messages that are beyond our size.
-        if (m_sample_no >= m_options.width)
-        {
-            finish();
-            return;
-        }
-
-        const GValue *val = gst_structure_get_value (structure, "magnitude");
         int size = gst_value_list_get_size (val);
         int i;
 
@@ -816,7 +800,7 @@ public:
             if (shade > 0.0)
             {
                 unsigned char *pixel = data + ((static_cast<int>(m_options.height) - 1 - i) * stride) +
-                    m_sample_no * sizeof (guint32);
+                    offset * sizeof (guint32);
                 // Try to decrease the background noise a bit while making the
                 // foreground noise stand out a bit better.  From 0 to T, we
                 // use a parabolic (squared) slope to de-emphasize the lower
@@ -840,6 +824,49 @@ public:
         }
         m_surface->mark_dirty ();
         ++m_sample_no;
+    }
+
+    void on_spectrum (GstBus *, const GstStructure *structure)
+    {
+        const GValue *vtimestamp = gst_structure_get_value (structure, "endtime");
+        double seconds = static_cast<double>(g_value_get_uint64(vtimestamp)) / GST_SECOND;
+        static int n = 0;
+        if (!m_cr)
+        {
+            //g_debug("got 'spectrum' message before duration: %s", gst_structure_to_string(structure));
+            return;
+        }
+        //g_debug("got spectrum message %i @ %g seconds", n++, seconds); 
+
+        static int last_px = -1;
+        int pixel_offset = (seconds  * m_options.resolution);
+        if (pixel_offset >= m_options.width)
+        {
+            finish();
+            return;
+        }
+        if (pixel_offset == last_px)
+        {
+            //jitter probably caused the message to fall on the previous pixel
+            //offset, so just draw it at the next one
+            pixel_offset++;
+        }
+
+        if (pixel_offset - last_px > 1)
+            g_debug("skipped pixels between %i and %i", last_px, pixel_offset);
+
+        const GValue *val = gst_structure_get_value (structure, "magnitude");
+        if (last_px != -1)
+        {
+            // paint columns that were missed due to jitter with the current
+            // magnitude just to avoid blank spots in the spectrogram
+            for (int i = last_px + 1; i < pixel_offset; i++)
+            {
+                paint_spectrum_at_offset(val, i);
+            }
+        }
+        paint_spectrum_at_offset(val, pixel_offset);
+        last_px = pixel_offset;
     }
 
     /* example data:
