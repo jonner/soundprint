@@ -464,6 +464,7 @@ public:
 
     void finish ()
     {
+    try {
         g_debug("%s", G_STRFUNC);
         gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
@@ -729,6 +730,12 @@ public:
 
         graph->write_to_png (m_options.output_file);
         m_mainloop->quit ();
+    }
+        catch(const std::exception& e)
+        {
+            g_warning("Unable to finish '%s': %s", m_options.output_file.c_str(), e.what());
+            exit(1);
+        }
     }
 
     static void on_element_message_proxy (GstBus *bus,
