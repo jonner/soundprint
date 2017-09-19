@@ -255,7 +255,7 @@ public:
     {
         gint64 duration = 0;
         GstFormat format = GST_FORMAT_TIME;
-        if (!gst_element_query_duration(m_pipeline, &format, &duration))
+        if (!gst_element_query_duration(m_pipeline, format, &duration))
             throw std::runtime_error("Couldn't query duration");
 
         //set up the cairo surface
@@ -361,7 +361,7 @@ public:
             GstPad *spectrum_pad =
                 gst_element_get_static_pad (m_spectrum, "sink");
 
-            GstCaps *caps = gst_pad_get_negotiated_caps (spectrum_pad);
+            GstCaps *caps = gst_pad_get_current_caps (spectrum_pad);
             GstStructure *structure = gst_caps_get_structure (caps, 0);
 
             const GValue *val = gst_structure_get_value (structure, "rate");
@@ -401,7 +401,7 @@ public:
     void on_pad_added (GstElement *, GstPad *pad)
     {
         g_debug("%s", G_STRFUNC);
-        GstCaps *caps = gst_pad_get_caps (pad);
+        GstCaps *caps = gst_pad_query_caps (pad, NULL);
         GstStructure *structure = gst_caps_get_structure (caps, 0);
         const char *name = gst_structure_get_name (structure);
 

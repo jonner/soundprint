@@ -236,7 +236,7 @@ public:
 
     void on_pad_added (GstElement *, GstPad *pad)
     {
-        GstCaps *caps = gst_pad_get_caps (pad);
+        GstCaps *caps = gst_pad_query_caps (pad, NULL);
         GstStructure *structure = gst_caps_get_structure (caps, 0);
         const char *name = gst_structure_get_name (structure);
 

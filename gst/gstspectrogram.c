@@ -35,6 +35,7 @@
 #include "config.h"
 #endif
 
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "gstspectrogram.h"
@@ -61,14 +62,13 @@ enum
   PROP_MULTI_CHANNEL
 };
 
-GST_BOILERPLATE (GstSpectrogram, gst_spectrogram, GstElement,
-    GST_TYPE_ELEMENT);
+G_DEFINE_TYPE (GstSpectrogram, gst_spectrogram, GST_TYPE_ELEMENT);
 
 static GstStaticPadTemplate src_template =
     GST_STATIC_PAD_TEMPLATE ("src",
                              GST_PAD_SRC,
                              GST_PAD_ALWAYS,
-                             GST_STATIC_CAPS (GST_VIDEO_CAPS_RGBx));
+                             GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE("RGBx")));
 
 static GstStaticPadTemplate sink_template =
     GST_STATIC_PAD_TEMPLATE ("sink",
@@ -135,43 +135,52 @@ static gboolean
 gst_spectrogram_setup (GstSpectrogram * self);
 
 static gboolean
-gst_spectrogram_sink_setcaps (GstPad *pad, GstCaps *caps)
+gst_spectrogram_sink_event (GstPad *pad, GstObject *parent, GstEvent *event)
 {
-  GstStructure *structure;
-  gboolean res;
-  GstSpectrogram *self = GST_SPECTROGRAM (GST_PAD_PARENT (pad));
+  gboolean res = FALSE;
+  GstSpectrogram *self = GST_SPECTROGRAM (parent);
+  if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+		GstStructure *structure;
+    GstCaps *caps;
 
-  structure = gst_caps_get_structure (caps, 0);
+		gst_event_parse_caps(event, &caps);
+		structure = gst_caps_get_structure (caps, 0);
 
-  res = gst_structure_get_int (structure, "channels", &self->format_channels);
-  res &= gst_structure_get_int (structure, "rate", &self->rate);
-  self->bps = self->format_channels * sizeof (gint16);
+		res = gst_structure_get_int (structure, "channels", &self->format_channels);
+		res &= gst_structure_get_int (structure, "rate", &self->rate);
+		self->bps = self->format_channels * sizeof (gint16);
 
-  res &= gst_spectrogram_setup (self);
+		res &= gst_spectrogram_setup (self);
+  }
 
   return res;
 }
 
 static gboolean
-gst_spectrogram_src_setcaps (GstPad *pad, GstCaps *caps)
+gst_spectrogram_src_event (GstPad *pad, GstObject *parent, GstEvent *event)
 {
-  GstStructure *structure;
-  gboolean res;
-  GstSpectrogram *self = GST_SPECTROGRAM (GST_PAD_PARENT (pad));
+  gboolean res = FALSE;
+  GstSpectrogram *self = GST_SPECTROGRAM (parent);
 
-  structure = gst_caps_get_structure (caps, 0);
+	if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+		GstStructure *structure;
+		GstCaps *caps;
 
-  res = gst_structure_get_int (structure, "width", &self->width);
-  res &= gst_structure_get_int (structure, "height", &self->height);
-  res &= gst_structure_get_fraction (structure, "framerate", &self->fps_n,
-                                &self->fps_d);
-  gchar *caps_str = gst_caps_to_string (caps);
-  g_debug ("Got src caps: %s", caps_str);
-  g_free (caps_str);
+		gst_event_parse_caps(event, &caps);
+		structure = gst_caps_get_structure (caps, 0);
 
-  self->interval = gst_util_uint64_scale_int (GST_SECOND, self->fps_d,
-                                              FFT_PER_VFRAME * self->fps_n);
+		res = gst_structure_get_int (structure, "width", &self->width);
+		res &= gst_structure_get_int (structure, "height", &self->height);
+		res &= gst_structure_get_fraction (structure, "framerate", &self->fps_n,
+				&self->fps_d);
+		gchar *caps_str = gst_caps_to_string (caps);
+		g_debug ("Got src caps: %s", caps_str);
+		g_free (caps_str);
 
+		self->interval = gst_util_uint64_scale_int (GST_SECOND, self->fps_d,
+				FFT_PER_VFRAME * self->fps_n);
+
+	}
   return res;
 }
 
@@ -179,9 +188,9 @@ static GstFlowReturn
 gst_spectrogram_process_buffer (GstSpectrogram * self, GstBuffer * buffer);
 
 static GstFlowReturn
-gst_spectrogram_chain (GstPad *pad, GstBuffer *buffer)
+gst_spectrogram_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer)
 {
-  GstSpectrogram *self = GST_SPECTROGRAM (gst_pad_get_parent (pad));
+  GstSpectrogram *self = GST_SPECTROGRAM (parent);
   GstFlowReturn ret = GST_FLOW_OK;
 
   if (self->bps == 0) {
@@ -189,14 +198,14 @@ gst_spectrogram_chain (GstPad *pad, GstBuffer *buffer)
     goto evacuate;
   }
 
-  if (GST_PAD_CAPS (self->srcpad) == NULL)
+  if (gst_pad_get_current_caps (self->srcpad) == NULL)
   {
     GST_DEBUG_OBJECT (self, "Trying to negotiate src pad");
 
     /* try to negotiate caps with peer */
     GstCaps *target;
-    const GstCaps *tmpl = gst_pad_get_pad_template_caps (self->srcpad);
-    GstCaps *peercaps = gst_pad_peer_get_caps (self->srcpad);
+    GstCaps *tmpl = gst_pad_get_pad_template_caps (self->srcpad);
+    GstCaps *peercaps = gst_pad_peer_query_caps (self->srcpad, NULL);
 
     if (peercaps) {
       target = gst_caps_intersect (peercaps, tmpl);
@@ -230,7 +239,7 @@ evacuate:
 }
 
 static void
-gst_spectrogram_init (GstSpectrogram *self, GstSpectrogramClass * g_class)
+gst_spectrogram_init (GstSpectrogram *self)
 {
   self->bands = DEFAULT_BANDS;
   self->threshold = DEFAULT_THRESHOLD;
@@ -238,13 +247,13 @@ gst_spectrogram_init (GstSpectrogram *self, GstSpectrogramClass * g_class)
   self->sinkpad = gst_pad_new_from_static_template (&sink_template, "sink");
   gst_pad_set_chain_function (self->sinkpad,
                               GST_DEBUG_FUNCPTR (gst_spectrogram_chain));
-  gst_pad_set_setcaps_function (self->sinkpad,
-                                GST_DEBUG_FUNCPTR (gst_spectrogram_sink_setcaps));
+  gst_pad_set_event_function (self->sinkpad,
+                              GST_DEBUG_FUNCPTR (gst_spectrogram_sink_event));
   gst_element_add_pad (GST_ELEMENT (self), self->sinkpad);
 
   self->srcpad = gst_pad_new_from_static_template (&src_template, "src");
-  gst_pad_set_setcaps_function (self->srcpad,
-                                GST_DEBUG_FUNCPTR (gst_spectrogram_src_setcaps));
+  gst_pad_set_event_function (self->srcpad,
+                                GST_DEBUG_FUNCPTR (gst_spectrogram_src_event));
   gst_element_add_pad (GST_ELEMENT (self), self->srcpad);
 
   self->spectrogram_data = g_queue_new ();
@@ -333,7 +342,7 @@ gst_spectrogram_finalize (GObject * object)
   gst_spectrogram_reset_state (self);
   g_queue_free (self->spectrogram_data);
 
-  G_OBJECT_CLASS (parent_class)->finalize (object);
+  G_OBJECT_CLASS (gst_spectrogram_parent_class)->finalize (object);
 }
 
 static void
@@ -548,25 +557,26 @@ gst_spectrogram_push_video_frame (GstSpectrogram *self)
   GstBuffer *buffer = 0;
   GstFlowReturn ret;
   int buffer_size = self->width * self->height * 4;
-  ret = gst_pad_alloc_buffer_and_set_caps (self->srcpad,
-                                           GST_BUFFER_OFFSET_NONE,
-                                           buffer_size,
-                                           GST_PAD_CAPS (self->srcpad),
-                                           &buffer);
+  buffer = gst_buffer_new_allocate(NULL, buffer_size, NULL);
 
-  if (ret != GST_FLOW_OK)
+  if (!buffer)
     return ret;
 
   static guchar count = 0x1;
 
-  memset (buffer->data, 0xff, buffer_size);
+  GstMapInfo map_info;
+  if (!gst_buffer_map(buffer, &map_info, GST_MAP_WRITE)) {
+    return ret;
+  }
+
+  memset (map_info.data, 0xff, buffer_size);
   int slices = g_queue_get_length (self->spectrogram_data);
   int i;
   for (i = 0; i < self->height; i++) {
     int j;
     for (j = 0; j < slices; j++) {
       guchar *src = g_queue_peek_nth (self->spectrogram_data, j) + (i * 4);
-      guchar *dest = buffer->data + (self->width - (j + 1)) * 4 + (self->width *
+      guchar *dest = map_info.data + (self->width - (j + 1)) * 4 + (self->width *
                                                                    4 * i);
       dest[0] = src[0];
       dest[1] = src[1];
@@ -575,7 +585,8 @@ gst_spectrogram_push_video_frame (GstSpectrogram *self)
   }
   count++;
 
-  GST_BUFFER_TIMESTAMP (buffer) = self->message_ts;
+  GST_BUFFER_DTS(buffer) = self->message_ts;
+  gst_buffer_unmap(buffer, &map_info);
 
   ret = gst_pad_push (self->srcpad, buffer);
 

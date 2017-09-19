@@ -17,7 +17,7 @@ AC_ARG_ENABLE([gio],
               [enable_gio=yes])
 
 PKG_CHECK_MODULES(SOUNDPRINT, [
-                               gstreamer-0.10
+                               gstreamer-1.0
                                glibmm-2.4
                                cairomm-1.0
                                ])
@@ -25,7 +25,7 @@ PKG_CHECK_MODULES(SOUNDPRINT, [
 AS_IF([test "x$enable_gio" = "xyes"],
       [
        PKG_CHECK_MODULES(SONOGEN, [
-                                   gstreamer-0.10
+                                   gstreamer-1.0
                                    glibmm-2.4
                                    cairomm-1.0
                                    pangocairo
@@ -35,7 +35,7 @@ AS_IF([test "x$enable_gio" = "xyes"],
        ],
        [
         PKG_CHECK_MODULES(SONOGEN, [
-                                    gstreamer-0.10
+                                    gstreamer-1.0
                                     glibmm-2.4
                                     cairomm-1.0
                                     pangocairo
@@ -43,8 +43,8 @@ AS_IF([test "x$enable_gio" = "xyes"],
         ])
 
 PKG_CHECK_MODULES(SPECTROGRAM, [
-                                gstreamer-0.10
-                                gstreamer-plugins-base-0.10
+                                gstreamer-1.0
+                                gstreamer-plugins-base-1.0
                                 ])
 
 AC_CONFIG_FILES([
