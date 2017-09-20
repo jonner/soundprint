@@ -16,6 +16,7 @@ sonogen_LDADD=@SONOGEN_LIBS@
 thumbnailerdir = $(datadir)/thumbnailers
 thumbnailer_DATA = soundprint.thumbnailer
 
+if BUILD_PLUGIN
 # gstreamer visualization plugin
 plugin_LTLIBRARIES = libgstspectrogram.la
 plugindir = $(libdir)/gstreamer-0.10/
@@ -25,5 +26,6 @@ libgstspectrogram_la_LIBADD = @SPECTROGRAM_LIBS@ -lgstaudio-0.10 -lgstfft-0.10 -
 libgstspectrogram_la_LIBTOOLFLAGS = --tag=disable-static
 
 noinst_HEADERS = gst/gstspectrogram.h
+endif
 
 EXTRA_DIST = soundprint.thumbnailer.in

@@ -42,10 +42,20 @@ AS_IF([test "x$enable_gio" = "xyes"],
                                     ])
         ])
 
-PKG_CHECK_MODULES(SPECTROGRAM, [
-                                gstreamer-1.0
-                                gstreamer-plugins-base-1.0
-                                ])
+AC_ARG_ENABLE([plugin],
+              [AS_HELP_STRING([--enable-plugin],
+                              [Enable gstreamer spectrogram visualization plugin])],
+              [enable_plugin=yes],
+              [])
+
+AM_CONDITIONAL(BUILD_PLUGIN, [test "x$enable_plugin" = "xyes"])
+AS_IF([test "x$enable_plugin" = "xyes"],
+      [
+       PKG_CHECK_MODULES(SPECTROGRAM, [
+                                       gstreamer-1.0
+                                       gstreamer-plugins-base-1.0
+                                       ])
+       ])
 
 AC_CONFIG_FILES([
                  Makefile
