@@ -57,6 +57,14 @@ static const char* format(const char* fmt, ...)
     return m_buf;
 }
 
+typedef enum {
+    STATE_START,
+    STATE_DURATION,
+    STATE_SEEK,
+    STATE_GENERATE,
+    STATE_DONE
+} AppState;
+
 // helper class to avoid mis-matched save()/restore() pairs.  Rely on scoping to
 // restore the context to the previously-saved graphics state. Also makes things
 // safer in the presence of exceptions / early returns.
@@ -203,13 +211,16 @@ class App
 public:
     App (const std::string & filearg, AppOptions &options)
     : m_options (options)
+    , m_state(STATE_START)
     , m_sampling_rate (0)
     , m_pipeline (0)
     , m_decoder (0)
+    , m_decoder_pad (0)
     , m_convert (0)
     , m_spectrum (0)
     , m_sink (0)
     , m_bus (0)
+    , m_duration (0)
     , m_peak_rms (options.noise_floor)
     , m_min_rms (options.noise_floor)
     , m_sample_no (0)
@@ -248,18 +259,30 @@ public:
     {
         g_object_unref (m_bus);
         g_object_unref (m_pipeline);
+        g_object_unref(m_decoder_pad);
         pango_font_description_free(m_fd);
     }
 
-    void set_duration()
+    void reset_pipeline()
     {
-        gint64 duration = 0;
-        GstFormat format = GST_FORMAT_TIME;
-        if (!gst_element_query_duration(m_pipeline, format, &duration))
-            throw std::runtime_error("Couldn't query duration");
+        g_debug("%s", G_STRFUNC);
+        if (gst_element_set_state(m_pipeline, GST_STATE_PAUSED) != GST_STATE_CHANGE_SUCCESS)
+            throw std::runtime_error("Unable to pause pipeline");
 
+        m_prerolled = false;
+        /* restart at the beginning */
+        if (!gst_element_seek_simple(m_pipeline, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, 0)) {
+            throw std::runtime_error("Unable to seek to the beginning");
+        }
+        g_signal_connect (m_bus, "message::async-done",
+                          G_CALLBACK (on_async_done_proxy), this);
+    }
+
+    void generate_sonogram()
+    {
+        g_debug("%s", G_STRFUNC);
         //set up the cairo surface
-        double seconds = GST_TIME_AS_SECONDS(duration);
+        double seconds = GST_TIME_AS_SECONDS(m_duration);
         double num_samples = (m_options.resolution * seconds);
 
         g_debug("Total file duration is %g", seconds);
@@ -271,6 +294,78 @@ public:
                                                  m_options.width,
                                                  m_options.height);
         m_cr = Cairo::Context::create (m_surface);
+
+        m_convert = gst_element_factory_make ("audioconvert", 0);
+        gst_element_set_state(m_convert, GST_STATE_PAUSED);
+        m_spectrum = gst_element_factory_make ("spectrum", 0);
+        gst_element_set_state(m_spectrum, GST_STATE_PAUSED);
+        m_filter = gst_element_factory_make ("audiocheblimit", 0);
+        gst_element_set_state(m_filter, GST_STATE_PAUSED);
+        m_level = gst_element_factory_make ("level", 0);
+        gst_element_set_state(m_level, GST_STATE_PAUSED);
+
+        g_object_set (m_filter,
+                      "mode", 1, // high-pass
+                      "cutoff", 440.0,
+                      NULL);
+
+        add(m_convert);
+        add(m_spectrum);
+        add(m_filter);
+        add(m_level);
+        gst_element_unlink(m_decoder, m_sink);
+
+        GstPad *convert_pad =
+            gst_element_get_static_pad (m_convert, "sink");
+
+        if (!gst_pad_link (m_decoder_pad, convert_pad) == GST_PAD_LINK_OK)
+            throw std::runtime_error("unable to link pad");
+
+        if (!gst_element_link (m_convert, m_spectrum)) throw std::runtime_error("Unable to link");
+        if (!gst_element_link (m_spectrum, m_filter)) throw std::runtime_error("Unable to link");
+        if (!gst_element_link (m_filter, m_level)) throw std::runtime_error("Unable to link");
+        if (!gst_element_link (m_level, m_sink)) throw std::runtime_error("Unable to link");
+
+        start_pipeline();
+    }
+
+    void on_duration_changed(GstBus *bus, GstMessage *message)
+    {
+        g_debug("%s", G_STRFUNC);
+        if (!gst_element_query_duration(m_pipeline, GST_FORMAT_TIME, &m_duration)) {
+            g_warning("Unable to query duration");
+        } else {
+            g_debug("Duration = %li", m_duration);
+        }
+    }
+
+    static void on_duration_changed_message_proxy (GstBus *bus,
+                                                   GstMessage *message,
+                                                   gpointer user_data)
+    {
+        App *self = static_cast<App*>(user_data);
+        self->on_duration_changed(bus, message);
+    }
+
+    void calculate_duration()
+    {
+        if (!m_prerolled || !m_decoder_pad)
+            throw std::runtime_error("Missing prerequisites for calculating duration");
+
+        GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(m_pipeline));
+            g_signal_connect (m_bus, "message::duration-changed",
+                              G_CALLBACK (on_duration_changed_message_proxy), this);
+
+        gst_element_set_state (m_pipeline, GST_STATE_PLAYING);
+    }
+
+    void add(GstElement *element)
+    {
+        if (!m_pipeline)
+            throw std::runtime_error("No pipeline");
+
+        if (!gst_bin_add(GST_BIN(m_pipeline), element))
+            throw std::runtime_error("Couldn't add element to pipeline");
     }
 
     int run ()
@@ -280,31 +375,17 @@ public:
             m_mainloop = Glib::MainLoop::create();
             m_pipeline = gst_pipeline_new (0);
             m_decoder = gst_element_factory_make ("uridecodebin", 0);
-            m_convert = gst_element_factory_make ("audioconvert", 0);
-            m_spectrum = gst_element_factory_make ("spectrum", 0);
-            m_filter = gst_element_factory_make ("audiocheblimit", 0);
-            m_level = gst_element_factory_make ("level", 0);
             m_sink = gst_element_factory_make ("fakesink", 0);
             m_bus = gst_pipeline_get_bus (GST_PIPELINE (m_pipeline));
 
-            gst_bin_add_many (GST_BIN (m_pipeline),
-                              m_decoder, m_convert, m_spectrum, m_filter, m_level, m_sink, NULL);
+            add(m_decoder);
+            add(m_sink);
 
             g_object_set (m_decoder,
-                          "uri", Glib::filename_to_utf8 (m_fileuri).c_str (),
+                          "uri", m_fileuri.c_str (),
                           NULL);
             g_signal_connect (m_decoder, "pad-added",
                               G_CALLBACK (on_pad_added_proxy), this);
-
-            gst_element_link (m_convert, m_spectrum);
-            gst_element_link (m_spectrum, m_filter);
-            gst_element_link (m_filter, m_level);
-            gst_element_link (m_level, m_sink);
-
-            g_object_set (m_filter,
-                          "mode", 1, // high-pass
-                          "cutoff", 440.0,
-                          NULL);
 
             gst_bus_add_signal_watch (m_bus);
 
@@ -331,7 +412,7 @@ public:
             }
             else
             {
-                set_duration();
+                state_done();
             }
 
             m_mainloop->run ();
@@ -356,12 +437,13 @@ public:
     bool start_pipeline ()
     {
         g_debug("%s", G_STRFUNC);
+        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(m_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start_pipeline");
         if (!m_sampling_rate)
         {
-            GstPad *spectrum_pad =
-                gst_element_get_static_pad (m_spectrum, "sink");
+            GstCaps *caps = gst_pad_get_current_caps (m_decoder_pad);
+            if (!caps)
+                throw std::runtime_error("Unable to get caps for decoder output");
 
-            GstCaps *caps = gst_pad_get_current_caps (spectrum_pad);
             GstStructure *structure = gst_caps_get_structure (caps, 0);
 
             const GValue *val = gst_structure_get_value (structure, "rate");
@@ -371,7 +453,6 @@ public:
             g_debug("sampling rate: %i", m_sampling_rate);
 
             gst_caps_unref (caps);
-            gst_object_unref (spectrum_pad);
 
             int band_freq = m_options.max_frequency / m_options.height;
             // according to nyquist, max frequency is half the sampling rate...
@@ -407,15 +488,14 @@ public:
 
         if (g_str_has_prefix (name, "audio/"))
         {
+            m_decoder_pad = GST_PAD(g_object_ref(pad));
             GstPad *sink_pad =
-                gst_element_get_static_pad (m_convert, "sink");
+                gst_element_get_static_pad (m_sink, "sink");
 
-            if (!gst_pad_link (pad, sink_pad) == GST_PAD_LINK_OK)
-                g_warning ("unable to link pad");
+            if (!gst_pad_link (m_decoder_pad, sink_pad) == GST_PAD_LINK_OK)
+                throw std::runtime_error("unable to link pad");
 
-            if (m_prerolled)
-                Glib::signal_idle ().connect (sigc::mem_fun (this,
-                                                             &App::start_pipeline));
+            state_done();
         }
         gst_caps_unref (caps);
     }
@@ -459,278 +539,322 @@ public:
     {
         g_debug("%s", G_STRFUNC);
         App *self = static_cast<App*>(user_data);
-        self->finish ();
+        self->state_done ();
     }
 
-    void finish ()
+    void change_state(AppState new_state)
     {
-    try {
-        g_debug("%s", G_STRFUNC);
-        gst_element_set_state (m_pipeline, GST_STATE_NULL);
+        m_state = new_state;
+        g_debug("%s: new state = %i", G_STRFUNC, m_state);
+        char *filename = g_strdup_printf("state-%i", m_state);
+        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(m_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, filename);
+        g_free(filename);
+        switch (m_state) {
+            case STATE_DURATION:
+                calculate_duration();
+                break;
+            case STATE_SEEK:
+                reset_pipeline();
+                break;
+            case STATE_GENERATE:
+                generate_sonogram();
+                break;
+            case STATE_DONE:
+                draw_sonogram();
+                m_mainloop->quit ();
+                break;
+        }
+    }
 
-        Cairo::RefPtr<Cairo::ImageSurface> graph;
-        if (m_options.draw_grid)
-        {
+    void state_done()
+    {
+        g_debug("%s: current state = %i", G_STRFUNC, m_state);
+        switch (m_state) {
+            case STATE_START:
+                if (m_prerolled && m_decoder_pad) {
+                    change_state(STATE_DURATION);
+                }
+                break;
+            case STATE_DURATION:
+                change_state(STATE_SEEK);
+                break;
+            case STATE_SEEK:
+                change_state(STATE_GENERATE);
+                break;
+            case STATE_GENERATE:
+                change_state(STATE_DONE);
+                break;
+        }
+    }
 
-            double pxPerKhz = m_options.height / (m_options.max_frequency / 1000);
-            double nKhz = static_cast<int>(m_options.max_frequency / 1000);
+    void draw_sonogram()
+    {
+        try {
+            g_debug("%s", G_STRFUNC);
+            gst_element_set_state (m_pipeline, GST_STATE_NULL);
 
-            double borderL, borderB;
-            // limit scope
+            Cairo::RefPtr<Cairo::ImageSurface> graph;
+            if (m_options.draw_grid)
             {
-                // measure width of frequency text
-                PangoLayout* layout = pango_cairo_create_layout(m_cr->cobj());
-                pango_layout_set_font_description(layout, m_fd);
-                pango_layout_set_text(layout, format("%fk", nKhz), -1);
-                PangoRectangle logical_extents;
-                pango_layout_get_extents(layout, NULL, &logical_extents);
-                double w = logical_extents.width / PANGO_SCALE;
-                double h = logical_extents.height / PANGO_SCALE;
-                borderL = GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
-                borderB = GRID_MARKER_LARGE + h + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
 
-                // now measure text for level (dB) axis
-                layout = pango_cairo_create_layout(m_cr->cobj());
-                pango_layout_set_font_description(layout, m_fd);
-                pango_layout_set_text(layout, format("%fdB", m_options.noise_floor), -1);
-                pango_layout_get_extents(layout, NULL, &logical_extents);
-                w = logical_extents.width / PANGO_SCALE;
-                borderL = std::max(GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE, borderL);
-            }
+                double pxPerKhz = m_options.height / (m_options.max_frequency / 1000);
+                double nKhz = static_cast<int>(m_options.max_frequency / 1000);
 
-            int seconds = static_cast<int>(m_options.width / m_options.resolution);
-            double w = borderL + m_options.width;
-            // draw emplitide below sonograph, witha  much smaller height. Add
-            // borderB space between them
-            double dbHeight = m_options.height / 6.0;
-            double h = borderB + m_options.height + dbHeight;
-            graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, w, h);
-            Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
-            // clear to white
-            cr->set_source_rgb (1.0, 1.0, 1.0);
-            cr->paint ();
-
-            {
-                ContextGuard gOuter(cr);
-                cr->scale (1, -1);
-                cr->translate (borderL, -m_options.height);
-                // translate by 0.5 to be pixel-aligned
-                cr->translate(-0.5, -0.5);
-
-                // draw main axes
-                cr->set_source_rgb(0.0, 0.0, 0.0);
-                cr->move_to(0, m_options.height);
-                cr->set_line_width(1.0);
-                cr->line_to (0, 0);
-                cr->line_to (m_options.width, 0);
-                cr->stroke();
-
-                // draw frequency axis markers
-                for (int f = 1; f <= nKhz; f++)
+                double borderL, borderB;
+                // limit scope
                 {
-                    ContextGuard gFreqAxis(cr);
-                    double markerSize = GRID_MARKER_SMALL;
-                    double gridAlpha = GRID_ALPHA_LIGHT;
-                    int y = static_cast<int>(f * pxPerKhz);
+                    // measure width of frequency text
+                    PangoLayout* layout = pango_cairo_create_layout(m_cr->cobj());
+                    pango_layout_set_font_description(layout, m_fd);
+                    pango_layout_set_text(layout, format("%fk", nKhz), -1);
+                    PangoRectangle logical_extents;
+                    pango_layout_get_extents(layout, NULL, &logical_extents);
+                    double w = logical_extents.width / PANGO_SCALE;
+                    double h = logical_extents.height / PANGO_SCALE;
+                    borderL = GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
+                    borderB = GRID_MARKER_LARGE + h + GRID_MARKER_SMALL + GRID_MARKER_LARGE;
 
-                    // always draw text for the max frequency
-                    bool drawText = (f == nKhz);
-
-                    if ((f % 5) == 0)
-                    {
-                        markerSize = GRID_MARKER_MED;
-                        gridAlpha = GRID_ALPHA_DARK;
-                        drawText = true;
-                    }
-
-                    if ((f % 10) == 0)
-                    {
-                        markerSize = GRID_MARKER_LARGE;
-                    }
-
-                    {
-                        ContextGuard gGridLine(cr);
-                        // align to pixel
-                        cr->move_to (-markerSize, y);
-                        cr->line_to (0, y);
-                        cr->stroke();
-
-                        // draw grid line with alpha
-                        cr->set_source_rgba(0.0, 0.0, 0.0, gridAlpha);
-                        cr->move_to(0, y);
-                        cr->line_to(m_options.width, y);
-                        cr->stroke();
-                    }
-
-                    if (drawText)
-                    {
-                        PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
-                        pango_layout_set_font_description(layout, m_fd);
-                        pango_layout_set_text(layout, format("%ik", f), -1);
-                        PangoRectangle extents;
-                        pango_layout_get_extents(layout, NULL, &extents);
-                        double w = extents.width / PANGO_SCALE;
-                        double h = extents.height / PANGO_SCALE;
-                        int tx = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL) - w;
-                        int ty = std::min(y + (h / 2.0), m_options.height);
-                        cr->move_to (tx, ty);
-                        // revert inverted scale so that the text doesnt' get mirrored
-                        cr->scale(1, -1);
-                        pango_cairo_update_layout (cr->cobj(), layout);
-                        pango_cairo_show_layout(cr->cobj(), layout);
-                    }
+                    // now measure text for level (dB) axis
+                    layout = pango_cairo_create_layout(m_cr->cobj());
+                    pango_layout_set_font_description(layout, m_fd);
+                    pango_layout_set_text(layout, format("%fdB", m_options.noise_floor), -1);
+                    pango_layout_get_extents(layout, NULL, &logical_extents);
+                    w = logical_extents.width / PANGO_SCALE;
+                    borderL = std::max(GRID_MARKER_SMALL + w + GRID_MARKER_SMALL + GRID_MARKER_LARGE, borderL);
                 }
 
-                // draw a line every second
+                int seconds = static_cast<int>(m_options.width / m_options.resolution);
+                double w = borderL + m_options.width;
+                // draw emplitide below sonograph, witha  much smaller height. Add
+                // borderB space between them
+                double dbHeight = m_options.height / 6.0;
+                double h = borderB + m_options.height + dbHeight;
+                graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, w, h);
+                Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
+                // clear to white
+                cr->set_source_rgb (1.0, 1.0, 1.0);
+                cr->paint ();
+
                 {
-                    ContextGuard guard(cr);
-                    for (int s = 1; s <= seconds; s++)
+                    ContextGuard gOuter(cr);
+                    cr->scale (1, -1);
+                    cr->translate (borderL, -m_options.height);
+                    // translate by 0.5 to be pixel-aligned
+                    cr->translate(-0.5, -0.5);
+
+                    // draw main axes
+                    cr->set_source_rgb(0.0, 0.0, 0.0);
+                    cr->move_to(0, m_options.height);
+                    cr->set_line_width(1.0);
+                    cr->line_to (0, 0);
+                    cr->line_to (m_options.width, 0);
+                    cr->stroke();
+
+                    // draw frequency axis markers
+                    for (int f = 1; f <= nKhz; f++)
                     {
-                        ContextGuard gIter(cr);
-                        double markerSize = GRID_MARKER_MED;
-                        if (s % 5 == 0)
+                        ContextGuard gFreqAxis(cr);
+                        double markerSize = GRID_MARKER_SMALL;
+                        double gridAlpha = GRID_ALPHA_LIGHT;
+                        int y = static_cast<int>(f * pxPerKhz);
+
+                        // always draw text for the max frequency
+                        bool drawText = (f == nKhz);
+
+                        if ((f % 5) == 0)
+                        {
+                            markerSize = GRID_MARKER_MED;
+                            gridAlpha = GRID_ALPHA_DARK;
+                            drawText = true;
+                        }
+
+                        if ((f % 10) == 0)
+                        {
                             markerSize = GRID_MARKER_LARGE;
+                        }
 
-                        // draw text every N marks
-                        int textN = 1;
-                        if (m_options.resolution <= 10)
-                            textN = 10;
-                        else if (m_options.resolution <= 30)
-                            textN = 5;
+                        {
+                            ContextGuard gGridLine(cr);
+                            // align to pixel
+                            cr->move_to (-markerSize, y);
+                            cr->line_to (0, y);
+                            cr->stroke();
 
-                        bool drawText = (s % textN) == 0;
+                            // draw grid line with alpha
+                            cr->set_source_rgba(0.0, 0.0, 0.0, gridAlpha);
+                            cr->move_to(0, y);
+                            cr->line_to(m_options.width, y);
+                            cr->stroke();
+                        }
 
-                        int x = static_cast<int>(m_options.resolution * s);
-                        cr->move_to (x, -markerSize);
-                        cr->line_to (x, 0);
+                        if (drawText)
+                        {
+                            PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
+                            pango_layout_set_font_description(layout, m_fd);
+                            pango_layout_set_text(layout, format("%ik", f), -1);
+                            PangoRectangle extents;
+                            pango_layout_get_extents(layout, NULL, &extents);
+                            double w = extents.width / PANGO_SCALE;
+                            double h = extents.height / PANGO_SCALE;
+                            int tx = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL) - w;
+                            int ty = std::min(y + (h / 2.0), m_options.height);
+                            cr->move_to (tx, ty);
+                            // revert inverted scale so that the text doesnt' get mirrored
+                            cr->scale(1, -1);
+                            pango_cairo_update_layout (cr->cobj(), layout);
+                            pango_cairo_show_layout(cr->cobj(), layout);
+                        }
+                    }
+
+                    // draw a line every second
+                    {
+                        ContextGuard guard(cr);
+                        for (int s = 1; s <= seconds; s++)
+                        {
+                            ContextGuard gIter(cr);
+                            double markerSize = GRID_MARKER_MED;
+                            if (s % 5 == 0)
+                                markerSize = GRID_MARKER_LARGE;
+
+                            // draw text every N marks
+                            int textN = 1;
+                            if (m_options.resolution <= 10)
+                                textN = 10;
+                            else if (m_options.resolution <= 30)
+                                textN = 5;
+
+                            bool drawText = (s % textN) == 0;
+
+                            int x = static_cast<int>(m_options.resolution * s);
+                            cr->move_to (x, -markerSize);
+                            cr->line_to (x, 0);
+                            cr->stroke();
+
+                            if (drawText)
+                            {
+                                PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
+                                pango_layout_set_font_description(layout, m_fd);
+                                pango_layout_set_text(layout, format("%is", s), -1);
+                                PangoRectangle extents;
+                                pango_layout_get_extents(layout, NULL, &extents);
+                                double w = extents.width / PANGO_SCALE;
+                                int tx = std::min (x - (w / 2.0), m_options.width - w);
+                                int ty = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL);
+                                cr->move_to (tx, ty);
+                                // revert inverted scale so that the text doesnt' get mirrored
+                                cr->scale(1, -1);
+                                pango_cairo_update_layout (cr->cobj(), layout);
+                                cr->set_source_rgb(0.0, 0.0, 0.0);
+                                pango_cairo_show_layout(cr->cobj(), layout);
+                            }
+                        }
+                    }
+
+                    // draw dB levels
+                    double dbRange = 70;
+                    // add 1 here since we offset 0.5 above and otherwise the bottom
+                    // axis would end up off the edge of the image
+                    cr->translate(0.0, -borderB + 1);
+                    cr->set_line_width(1.0);
+
+                    {
+                        ContextGuard gLevelClip(cr);
+                        cr->rectangle(0, 0, m_options.width, -dbHeight);
+                        cr->clip();
+                        {
+                            ContextGuard gLevels(cr);
+                            cr->scale(m_options.width / seconds, dbHeight / (dbRange));
+
+                            cr->move_to(0, -dbRange);
+                            for (std::map<double, double>::const_iterator it = m_levels.begin();
+                                 it != m_levels.end(); ++it)
+                            {
+                                cr->line_to(it->first, it->second);
+                            }
+                            cr->line_to(m_levels.rbegin()->first, -dbRange);
+                        }
+
+                        Cairo::RefPtr<Cairo::LinearGradient> gradient = Cairo::LinearGradient::create(0.0, 0.0, 0.0, -dbRange);
+                        gradient->add_color_stop_rgba(0.0, 0.5255, 0.1529, 0.0353, 0.7);
+                        gradient->add_color_stop_rgba(0.2, 0.5255, 0.1529, 0.0353, 0.8);
+                        gradient->add_color_stop_rgba(0.7, 0.5255, 0.1529, 0.0353, 1.0);
+                        cr->set_source(gradient);
+                        cr->fill_preserve();
+                        cr->set_line_width(1.5);
+                        cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+                        cr->set_source_rgb(0.3451, 0.1137, 0.051);
+                        cr->stroke();
+                    }
+
+                    // draw axes for amplitude graph
+                    cr->set_source_rgb(0.0, 0.0, 0.0);
+                    cr->move_to(0, 0);
+                    cr->set_line_width(1.0);
+                    cr->line_to (0, -dbHeight);
+                    cr->rel_line_to (m_options.width, 0);
+                    cr->stroke();
+
+                    // draw level (dB) axis markers
+                    for (int l = 0; l >= -dbRange; l-=15)
+                    {
+                        ContextGuard gLevelAxis(cr);
+                        bool drawText = false;
+                        double markerSize = GRID_MARKER_SMALL;
+
+                        if ((l % 30) == 0)
+                        {
+                            markerSize = GRID_MARKER_MED;
+                            drawText = true;
+                        }
+
+                        int y = (l / dbRange) * dbHeight;
+
+                        cr->move_to (-markerSize, y);
+                        cr->rel_line_to (markerSize, 0);
                         cr->stroke();
 
                         if (drawText)
                         {
                             PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
                             pango_layout_set_font_description(layout, m_fd);
-                            pango_layout_set_text(layout, format("%is", s), -1);
+                            pango_layout_set_text(layout, format("%idB", l), -1);
                             PangoRectangle extents;
                             pango_layout_get_extents(layout, NULL, &extents);
                             double w = extents.width / PANGO_SCALE;
-                            int tx = std::min (x - (w / 2.0), m_options.width - w);
-                            int ty = - (GRID_MARKER_LARGE + GRID_MARKER_SMALL);
+                            double h = extents.height / PANGO_SCALE;
+                            int tx = - (GRID_MARKER_MED + GRID_MARKER_SMALL) - w;
+                            int ty = std::max(y + (h / 2.0), -dbHeight + h);
                             cr->move_to (tx, ty);
+
                             // revert inverted scale so that the text doesnt' get mirrored
                             cr->scale(1, -1);
                             pango_cairo_update_layout (cr->cobj(), layout);
-                            cr->set_source_rgb(0.0, 0.0, 0.0);
                             pango_cairo_show_layout(cr->cobj(), layout);
                         }
                     }
                 }
 
-                // draw dB levels
-                double dbRange = 70;
-                // add 1 here since we offset 0.5 above and otherwise the bottom
-                // axis would end up off the edge of the image
-                cr->translate(0.0, -borderB + 1);
-                cr->set_line_width(1.0);
+                cr->set_source(m_surface, borderL, 0);
+                cr->paint();
 
-                {
-                    ContextGuard gLevelClip(cr);
-                    cr->rectangle(0, 0, m_options.width, -dbHeight);
-                    cr->clip();
-                    {
-                        ContextGuard gLevels(cr);
-                        cr->scale(m_options.width / seconds, dbHeight / (dbRange));
+            }
+            else
+            {
+                // no grid, but the sono image is curently transparent, so paint it
+                // over a solid background
+                graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, m_options.width, m_options.height);
+                Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
+                // clear to white
+                cr->set_source_rgb (1.0, 1.0, 1.0);
+                cr->paint ();
 
-                        cr->move_to(0, -dbRange);
-                        for (std::map<double, double>::const_iterator it = m_levels.begin();
-                             it != m_levels.end(); ++it)
-                        {
-                            cr->line_to(it->first, it->second);
-                        }
-                        cr->line_to(m_levels.rbegin()->first, -dbRange);
-                    }
-
-                    Cairo::RefPtr<Cairo::LinearGradient> gradient = Cairo::LinearGradient::create(0.0, 0.0, 0.0, -dbRange);
-                    gradient->add_color_stop_rgba(0.0, 0.5255, 0.1529, 0.0353, 0.7);
-                    gradient->add_color_stop_rgba(0.2, 0.5255, 0.1529, 0.0353, 0.8);
-                    gradient->add_color_stop_rgba(0.7, 0.5255, 0.1529, 0.0353, 1.0);
-                    cr->set_source(gradient);
-                    cr->fill_preserve();
-                    cr->set_line_width(1.5);
-                    cr->set_line_join(Cairo::LINE_JOIN_ROUND);
-                    cr->set_source_rgb(0.3451, 0.1137, 0.051);
-                    cr->stroke();
-                }
-
-                // draw axes for amplitude graph
-                cr->set_source_rgb(0.0, 0.0, 0.0);
-                cr->move_to(0, 0);
-                cr->set_line_width(1.0);
-                cr->line_to (0, -dbHeight);
-                cr->rel_line_to (m_options.width, 0);
-                cr->stroke();
-
-                // draw level (dB) axis markers
-                for (int l = 0; l >= -dbRange; l-=15)
-                {
-                    ContextGuard gLevelAxis(cr);
-                    bool drawText = false;
-                    double markerSize = GRID_MARKER_SMALL;
-
-                    if ((l % 30) == 0)
-                    {
-                        markerSize = GRID_MARKER_MED;
-                        drawText = true;
-                    }
-
-                    int y = (l / dbRange) * dbHeight;
-
-                    cr->move_to (-markerSize, y);
-                    cr->rel_line_to (markerSize, 0);
-                    cr->stroke();
-
-                    if (drawText)
-                    {
-                        PangoLayout* layout = pango_cairo_create_layout(cr->cobj());
-                        pango_layout_set_font_description(layout, m_fd);
-                        pango_layout_set_text(layout, format("%idB", l), -1);
-                        PangoRectangle extents;
-                        pango_layout_get_extents(layout, NULL, &extents);
-                        double w = extents.width / PANGO_SCALE;
-                        double h = extents.height / PANGO_SCALE;
-                        int tx = - (GRID_MARKER_MED + GRID_MARKER_SMALL) - w;
-                        int ty = std::max(y + (h / 2.0), -dbHeight + h);
-                        cr->move_to (tx, ty);
-
-                        // revert inverted scale so that the text doesnt' get mirrored
-                        cr->scale(1, -1);
-                        pango_cairo_update_layout (cr->cobj(), layout);
-                        pango_cairo_show_layout(cr->cobj(), layout);
-                    }
-                }
+                // paint the sono image onto the new solid surface
+                cr->set_source(m_surface, 0, 0);
+                cr->paint();
             }
 
-            cr->set_source(m_surface, borderL, 0);
-            cr->paint();
-
+            graph->write_to_png (m_options.output_file);
         }
-        else
-        {
-            // no grid, but the sono image is curently transparent, so paint it
-            // over a solid background
-            graph = Cairo::ImageSurface::create (Cairo::FORMAT_RGB24, m_options.width, m_options.height);
-            Cairo::RefPtr<Cairo::Context> cr = Cairo::Context::create (graph);
-            // clear to white
-            cr->set_source_rgb (1.0, 1.0, 1.0);
-            cr->paint ();
-
-            // paint the sono image onto the new solid surface
-            cr->set_source(m_surface, 0, 0);
-            cr->paint();
-        }
-
-        graph->write_to_png (m_options.output_file);
-        m_mainloop->quit ();
-    }
         catch(const std::exception& e)
         {
             g_warning("Unable to finish '%s': %s", m_options.output_file.c_str(), e.what());
@@ -842,7 +966,7 @@ public:
         int pixel_offset = (seconds  * m_options.resolution);
         if (pixel_offset >= m_options.width)
         {
-            finish();
+            state_done();
             return;
         }
         if (pixel_offset == last_px)
@@ -881,11 +1005,12 @@ public:
     {
         const GValue *vtimestamp = gst_structure_get_value (structure, "timestamp");
         double seconds = static_cast<double>(g_value_get_uint64(vtimestamp)) / GST_SECOND;
-        const GValue *vrms = gst_structure_get_value(structure, "rms");
+        const GValue *vrms = gst_structure_get_value(const_cast<GstStructure*>(structure), "rms");
+        GValueArray *rms = reinterpret_cast<GValueArray*>(g_value_get_boxed(vrms));
         double max_channel = m_options.noise_floor;
-        for (gsize i = 0; i < gst_value_list_get_size (vrms); ++i)
+        for (gsize i = 0; i < rms->n_values; ++i)
         {
-            const GValue *floatval = gst_value_list_get_value (vrms, i);
+            const GValue *floatval = g_value_array_get_nth(rms, i);
             max_channel = std::max(max_channel, g_value_get_double(floatval));
         }
 
@@ -914,12 +1039,8 @@ public:
     void on_async_done (GstBus *, GstMessage *)
     {
         g_debug("%s", G_STRFUNC);
-        if (m_prerolled)
-            return;
-
         m_prerolled = true;
-        set_duration();
-        start_pipeline ();
+        state_done();
         g_signal_handlers_disconnect_by_func (m_bus,
                                               (gpointer)on_async_done_proxy,
                                               this);
@@ -930,12 +1051,14 @@ private:
     Glib::RefPtr<Glib::MainLoop> m_mainloop;
 
     AppOptions m_options;
+    AppState m_state;
 
     int m_sampling_rate;
     std::string m_fileuri;
 
     GstElement *m_pipeline;
     GstElement *m_decoder; // weak ref
+    GstPad *m_decoder_pad;
     GstElement *m_convert; // weak ref
     GstElement *m_spectrum; // weak ref
     GstElement *m_filter; // weak ref
@@ -943,6 +1066,7 @@ private:
     GstElement *m_sink; // weak ref
     GstBus *m_bus;
 
+    gint64 m_duration;
     double m_peak_rms;
     double m_min_rms;
     std::map<double, double> m_levels;
