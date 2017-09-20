@@ -1010,7 +1010,9 @@ public:
         double max_channel = m_options.noise_floor;
         for (gsize i = 0; i < rms->n_values; ++i)
         {
+            G_GNUC_BEGIN_IGNORE_DEPRECATIONS
             const GValue *floatval = g_value_array_get_nth(rms, i);
+            G_GNUC_END_IGNORE_DEPRECATIONS
             max_channel = std::max(max_channel, g_value_get_double(floatval));
         }
 
